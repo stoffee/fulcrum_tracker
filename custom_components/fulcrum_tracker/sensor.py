@@ -21,10 +21,9 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
 )
 
-from .const import DOMAIN
+from .const import DOMAIN, CONF_PERSON_ID, CONF_CLIENT_ID
 from .zenplanner_auth import ZenPlannerAuth
-from ...old_app.fetch_classes import ZenPlannerCalendar
-from ...old_app.fetch_pr import PRFetcher
+from .zenplanner_calendar import ZenPlannerCalendar
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,11 +38,6 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         icon="mdi:dumbbell",
         native_unit_of_measurement="sessions",
         state_class=SensorStateClass.TOTAL_INCREASING,
-    ),
-    SensorEntityDescription(
-        key="recent_prs",
-        name="Recent PRs",
-        icon="mdi:trophy",
     ),
     SensorEntityDescription(
         key="monthly_attendance",
@@ -69,6 +63,8 @@ async def async_setup_entry(
     """Set up the Fulcrum Tracker sensors."""
     username = config_entry.data[CONF_USERNAME]
     password = config_entry.data[CONF_PASSWORD]
+    person_id = config_entry.data[CONF_PERSON_ID]
+    client_id = config_entry.data[CONF_CLIENT_ID]
 
     # Create auth instance
     auth = ZenPlannerAuth(username, password)
@@ -79,6 +75,8 @@ async def async_setup_entry(
         logger=_LOGGER,
         name="fulcrum_tracker",
         auth=auth,
+        person_id=person_id,
+        client_id=client_id,
     )
 
     # Fetch initial data
@@ -102,6 +100,8 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         logger: logging.Logger,
         name: str,
         auth: ZenPlannerAuth,
+        person_id: str,
+        client_id: str,
     ) -> None:
         """Initialize."""
         super().__init__(
@@ -111,7 +111,9 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             update_interval=UPDATE_INTERVAL,
         )
         self.auth = auth
-        self._monthly_cost = 315.35  # Current monthly rate
+        self.person_id = person_id
+        self.client_id = client_id
+        self._monthly_cost = 315.35  # We'll make this configurable later
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from Fulcrum."""
@@ -126,117 +128,29 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 raise Exception("Failed to login to ZenPlanner")
 
             # Fetch attendance data
+            calendar = ZenPlannerCalendar(self.auth, self.person_id, self.client_id)
             attendance = await self.hass.async_add_executor_job(
-                self._fetch_attendance_data
+                calendar.get_attendance_data
             )
-            data.update(attendance)
-
-            # Fetch PR data
-            prs = await self.hass.async_add_executor_job(
-                self._fetch_pr_data
-            )
-            data.update(prs)
-
-            return data
+            
+            # Calculate current month sessions
+            current_month = datetime.now().strftime('%B %Y')
+            monthly_sessions = attendance.get('monthly_sessions', 0)
+            
+            # Calculate cost per session
+            cost_per_session = self._monthly_cost / monthly_sessions if monthly_sessions > 0 else 0
+            
+            return {
+                "total_sessions": attendance.get('total_sessions', 0),
+                "monthly_attendance": monthly_sessions,
+                "cost_per_session": round(cost_per_session, 2),
+                "last_session": attendance.get('last_session'),
+                "trainer_stats": attendance.get('trainer_stats', {}),
+            }
 
         except Exception as err:
             self.logger.error("Error fetching data: %s", err)
             raise
-
-    def _fetch_attendance_data(self) -> dict[str, Any]:
-        """Fetch attendance data from ZenPlanner."""
-        try:
-            # Use existing fetch_classes functionality
-            calendar = ZenPlannerCalendar(self.auth)
-            start_date = datetime(2021, 11, 1)  # Your original start date
-            history = calendar.fetch_all_history(start_date)
-            
-            # Calculate current month sessions
-            current_month = datetime.now().strftime('%B %Y')
-            monthly_sessions = sum(1 for s in history['sessions'] 
-                                 if s['month_year'] == current_month)
-            
-            # Calculate cost per session
-            if monthly_sessions > 0:
-                cost_per_session = round(self._monthly_cost / monthly_sessions, 2)
-            else:
-                cost_per_session = self._monthly_cost
-            
-            return {
-                "total_sessions": history['total_sessions'],
-                "monthly_sessions": monthly_sessions,
-                "cost_per_session": cost_per_session,
-                "last_session": history['sessions'][0]['date'] if history['sessions'] else None,
-                "trainer_stats": self._calculate_trainer_stats(history['sessions']),
-            }
-            
-        except Exception as err:
-            _LOGGER.error("Error fetching attendance data: %s", err)
-            return {
-                "total_sessions": None,
-                "monthly_sessions": None,
-                "cost_per_session": None,
-                "last_session": None,
-                "trainer_stats": {},
-            }
-            
-    def _calculate_trainer_stats(self, sessions: list) -> dict:
-        """Calculate statistics per trainer."""
-        trainer_counts = {}
-        for session in sessions:
-            if 'description' in session:
-                # Extract trainer name from description
-                trainer = self._extract_trainer(session['description'])
-                if trainer:
-                    trainer_counts[trainer] = trainer_counts.get(trainer, 0) + 1
-        return trainer_counts
-        
-    @staticmethod
-    def _extract_trainer(description: str) -> Optional[str]:
-        """Extract trainer name from session description."""
-        if "Instructor:" in description:
-            return description.split("Instructor:")[1].strip()
-
-    def _fetch_pr_data(self) -> dict[str, Any]:
-        """Fetch PR data from ZenPlanner."""
-        try:
-            # Use existing fetch_pr functionality
-            pr_fetcher = PRFetcher()
-            prs = pr_fetcher.fetch_prs()
-            
-            # Find recent PRs (last 7 days)
-            recent_prs = []
-            for pr in prs:
-                if pr.get('days') and int(pr['days']) <= 7:
-                    recent_prs.append({
-                        'name': pr['name'],
-                        'value': pr['pr'],
-                        'days_ago': pr['days']
-                    })
-            
-            # Format for display
-            if recent_prs:
-                recent_pr_text = ", ".join(
-                    f"{pr['name']}: {pr['value']}" for pr in recent_prs
-                )
-            else:
-                recent_pr_text = "No recent PRs"
-            
-            return {
-                "recent_prs": recent_pr_text,
-                "total_prs": len(prs),
-                "recent_pr_count": len(recent_prs),
-                "pr_details": prs,  # Store full PR details for attributes
-            }
-            
-        except Exception as err:
-            _LOGGER.error("Error fetching PR data: %s", err)
-            return {
-                "recent_prs": "Error fetching PRs",
-                "total_prs": None,
-                "recent_pr_count": 0,
-                "pr_details": [],
-            }
 
 
 class FulcrumSensor(CoordinatorEntity, SensorEntity):
@@ -271,23 +185,15 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
         attrs = {}
         data = self.coordinator.data or {}
         
-        if self.entity_description.key == "recent_prs":
-            if "pr_details" in data:
-                attrs["all_prs"] = data["pr_details"]
-                attrs["total_prs"] = data["total_prs"]
-                attrs["recent_pr_count"] = data["recent_pr_count"]
-                
-        elif self.entity_description.key == "total_sessions":
+        if self.entity_description.key == "total_sessions":
             if "trainer_stats" in data:
                 attrs["trainer_sessions"] = data["trainer_stats"]
             if "last_session" in data:
                 attrs["last_session"] = data["last_session"]
-            if "monthly_sessions" in data:
-                attrs["current_month_sessions"] = data["monthly_sessions"]
             
         elif self.entity_description.key == "cost_per_session":
             attrs["monthly_cost"] = self.coordinator._monthly_cost
-            if "monthly_sessions" in data:
-                attrs["monthly_sessions"] = data["monthly_sessions"]
+            if "monthly_attendance" in data:
+                attrs["monthly_sessions"] = data["monthly_attendance"]
 
         return attrs
