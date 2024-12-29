@@ -174,3 +174,37 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+
+# Home Assistant specific
+.storage
+.cloud
+.HA_VERSION
+.uuid
+home-assistant.log
+home-assistant_v2.db*
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Secrets
+secrets.yaml
+.fake_secrets.yaml
+ip_bans.yaml
+
+# ZenPlanner cached data
+*.session
+*.cookies
+training_history.json
+attendance_*.json
+
+# Local development
+.pytest_cache/
+.pytest-*.xml
+__pycache__/
+*.py[cod]
+*$py.class
+.coverage
+coverage.xml
+htmlcov/
+.tox/

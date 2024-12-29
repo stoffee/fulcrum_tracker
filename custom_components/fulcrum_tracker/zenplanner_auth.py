@@ -111,7 +111,7 @@ class ZenPlannerAuth:
 
 if __name__ == "__main__":
     # Example usage
-    from config import ZENPLANNER_EMAIL, ZENPLANNER_PASSWORD
+    from old_app.config import ZENPLANNER_EMAIL, ZENPLANNER_PASSWORD
     zp = ZenPlannerAuth(ZENPLANNER_EMAIL, ZENPLANNER_PASSWORD)
     if zp.login():
         print("\n🎯 Ready to fetch some classes! 💪")

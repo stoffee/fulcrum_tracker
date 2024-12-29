@@ -1,4 +1,4 @@
-from zenplanner_auth import ZenPlannerAuth
+from custom_components.fulcrum_tracker.zenplanner_auth import ZenPlannerAuth
 from config import ZENPLANNER_EMAIL, ZENPLANNER_PASSWORD
 import re
 from datetime import datetime
