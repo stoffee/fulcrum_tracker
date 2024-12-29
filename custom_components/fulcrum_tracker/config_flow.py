@@ -11,12 +11,18 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import config_validation as cv
 
+from .const import (
+    DOMAIN,
+    CONF_PERSON_ID,
+    CONF_CLIENT_ID,
+    CONF_MONTHLY_COST,
+    DEFAULT_MONTHLY_COST,
+)
 from .zenplanner_auth import ZenPlannerAuth
 
 _LOGGER = logging.getLogger(__name__)
-
-DOMAIN = "fulcrum_tracker"
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Fulcrum Tracker."""
@@ -55,6 +61,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required(CONF_USERNAME): str,
                     vol.Required(CONF_PASSWORD): str,
+                    vol.Required(CONF_PERSON_ID): str,
+                    vol.Required(CONF_CLIENT_ID): str,
+                    vol.Optional(CONF_MONTHLY_COST, default=DEFAULT_MONTHLY_COST): float,
                 }
             ),
             errors=errors,
