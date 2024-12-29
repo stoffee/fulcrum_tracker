@@ -1,0 +1,9 @@
+{
+    "name": "Fulcrum Fitness Tracker",
+    "render_readme": true,
+    "domain": "fulcrum_tracker",
+    "documentation": "https://github.com/stoffee/fulcrum_tracker",
+    "issue_tracker": "https://github.com/stoffee/fulcrum_tracker/issues",
+    "homeassistant": "2024.1.0",
+    "hacs": "2.0.0"
+  }

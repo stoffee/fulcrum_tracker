@@ -1,0 +1,11 @@
+{
+    "domain": "fulcrum_tracker",
+    "name": "Fulcrum Fitness Tracker",
+    "documentation": "https://github.com/stoffee/fulcrum_tracker",
+    "dependencies": [],
+    "codeowners": ["@stoffee"],
+    "requirements": ["requests>=2.31.0", "beautifulsoup4>=4.12.2"],
+    "config_flow": true,
+    "iot_class": "cloud_polling",
+    "version": "1.0.0"
+  }

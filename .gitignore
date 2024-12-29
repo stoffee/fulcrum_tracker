@@ -1,7 +1,5 @@
 # config for login details
 config.py
-*.html
-*.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
