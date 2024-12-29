@@ -26,32 +26,48 @@ class ZenPlannerCalendar:
             "Do the back muscles",
             "Tabor Stair Climb"
         ]
+        _LOGGER.debug("ZenPlannerCalendar initialized with person_id: %s", person_id)
 
     def get_attendance_data(self) -> Dict[str, Any]:
         """Fetch attendance data from ZenPlanner."""
         try:
-            # Ensure we're logged in
-            if not self.auth.is_logged_in():
+            _LOGGER.debug("Starting attendance data fetch")
+            
+            # Check login status
+            is_logged_in = self.auth.is_logged_in()
+            _LOGGER.debug("Current login status: %s", is_logged_in)
+            
+            if not is_logged_in:
+                _LOGGER.debug("Not logged in, attempting login")
                 if not self.auth.login():
                     raise Exception("Failed to login")
+                _LOGGER.debug("Login successful")
 
             # Fetch attendance page
             attendance_url = f"{self.base_url}/person-attendance.cfm"
             params = {
                 "personId": self.person_id,
-                "view": "list"  # This gets the full list view
+                "view": "list"
             }
+            _LOGGER.debug("Fetching attendance data from URL: %s with params: %s", attendance_url, params)
             
             response = self.auth.session.get(attendance_url, params=params)
+            _LOGGER.debug("Response status code: %s", response.status_code)
+            
             if not response.ok:
                 raise Exception(f"Failed to fetch attendance data: {response.status_code}")
 
             # Parse the attendance page
             soup = BeautifulSoup(response.text, 'html.parser')
             
+            # Save response for debugging
+            _LOGGER.debug("Response content preview: %s", response.text[:500])
+            
             # Find the attendance table
             attendance_table = soup.find('table', {'class': 'dataTable'})
             if not attendance_table:
+                _LOGGER.error("Could not find attendance table in HTML response")
+                _LOGGER.debug("Available tables: %s", [table.get('class', ['no-class']) for table in soup.find_all('table')])
                 raise Exception("Could not find attendance table")
 
             # Count sessions
@@ -62,19 +78,23 @@ class ZenPlannerCalendar:
 
             # Process each row in the table
             rows = attendance_table.find_all('tr')
+            _LOGGER.debug("Found %d rows in attendance table", len(rows))
+            
             for row in rows[1:]:  # Skip header row
                 cols = row.find_all('td')
-                if len(cols) >= 3:  # We need at least date and class name
+                if len(cols) >= 3:
                     date_str = cols[0].text.strip()
                     class_name = cols[2].text.strip()
+                    _LOGGER.debug("Processing row - Date: %s, Class: %s", date_str, class_name)
 
-                    # Try to parse the date
                     try:
                         session_date = datetime.strptime(date_str, '%m/%d/%Y')
                         
                         # Check if this is a training session
-                        if any(pattern.lower() in class_name.lower() for pattern in self.session_patterns):
+                        is_training = any(pattern.lower() in class_name.lower() for pattern in self.session_patterns)
+                        if is_training:
                             total_sessions += 1
+                            _LOGGER.debug("Found training session: %s", class_name)
                             
                             # Track last session
                             if last_session_date is None or session_date > last_session_date:
@@ -85,14 +105,16 @@ class ZenPlannerCalendar:
                                 current_month_sessions += 1
                     
                     except ValueError as e:
-                        _LOGGER.warning(f"Could not parse date: {date_str} - {e}")
+                        _LOGGER.warning("Could not parse date: %s - %s", date_str, e)
                         continue
 
-            return {
+            result = {
                 "total_sessions": total_sessions,
                 "monthly_sessions": current_month_sessions,
                 "last_session": last_session_date.strftime('%Y-%m-%d') if last_session_date else None
             }
+            _LOGGER.debug("Final results: %s", result)
+            return result
 
         except Exception as ex:
             _LOGGER.error("Error fetching attendance data: %s", str(ex))

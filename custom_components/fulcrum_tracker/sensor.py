@@ -117,6 +117,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from Fulcrum."""
+        _LOGGER.debug("Starting data update")
         data = {}
         
         try:
