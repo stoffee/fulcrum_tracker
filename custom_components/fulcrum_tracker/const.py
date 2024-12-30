@@ -19,10 +19,6 @@ API_ENDPOINTS = {
     "month_calendar": "/calendar/month-calendar.cfm"
 }
 
-# User Constants
-DEFAULT_USER_ID = "E28E53AA-CE35-4958-9B3F-C46584509E03"
-DEFAULT_CLIENT_ID = "5FB54891-E59C-4B11-B594-D6273E607418"
-
 # Error messages
 ERROR_AUTH = "Authentication failed"
 ERROR_CONNECTION = "Connection failed"
