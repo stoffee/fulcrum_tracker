@@ -20,7 +20,7 @@ from .const import (
     CONF_MONTHLY_COST,
     DEFAULT_MONTHLY_COST,
 )
-from .zenplanner_auth import ZenPlannerAuth
+from .api.auth import ZenPlannerAuth
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,7 +49,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # Create unique ID based on username
                 await self.async_set_unique_id(user_input[CONF_USERNAME])
                 self._abort_if_unique_id_configured()
-
                 return self.async_create_entry(
                     title=f"Fulcrum ({user_input[CONF_USERNAME]})",
                     data=user_input,
@@ -63,15 +62,18 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Required(CONF_PASSWORD): str,
                     vol.Required(CONF_PERSON_ID): str,
                     vol.Required(CONF_CLIENT_ID): str,
-                    vol.Optional(CONF_MONTHLY_COST, default=DEFAULT_MONTHLY_COST): float,
+                    vol.Optional(CONF_MONTHLY_COST, default=DEFAULT_MONTHLY_COST): cv.positive_float,
                 }
             ),
             errors=errors,
         )
 
     async def async_validate_input(self, data: dict[str, Any]) -> None:
-        """Validate the user input allows us to connect."""
+        """Validate the user input allows us to connect.
         
+        Data passed to this method is automatically saved to the config entry.
+        Invalid data raises an exception that shows up as a persistent error to the user.
+        """
         # Create ZenPlanner auth instance
         auth = ZenPlannerAuth(data[CONF_USERNAME], data[CONF_PASSWORD])
         
@@ -84,6 +86,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except Exception as ex:
             _LOGGER.error("Connection test failed: %s", ex)
             raise CannotConnect from ex
+
+        # Validate monthly cost is positive
+        if data.get(CONF_MONTHLY_COST, DEFAULT_MONTHLY_COST) <= 0:
+            raise vol.Invalid("Monthly cost must be greater than 0")
 
 
 class CannotConnect(HomeAssistantError):
