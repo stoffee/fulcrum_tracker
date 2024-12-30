@@ -20,10 +20,13 @@ class ZenPlannerCalendar:
 
     def fetch_month(self, start_date: datetime) -> List[Dict[str, Any]]:
         """Fetch a specific month's data."""
-        url = f"{self.base_url}/person-attendance.cfm"
+        # Fixed URL structure
+        url = f"{self.base_url}/calendar/month-calendar.cfm"  # Changed this line
         params = {
+            "clientId": self.client_id,
             "personId": self.person_id,
-            "startdate": start_date.strftime('%Y-%m-%d')
+            "startdate": start_date.strftime('%Y-%m-%d'),
+            "type": "person"  # Added this parameter
         }
         current_date = datetime.now()
         
