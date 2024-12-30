@@ -60,11 +60,8 @@ class ZenPlannerCalendar:
             # Parse the attendance page
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Save response for debugging
-            _LOGGER.debug("Response content preview: %s", response.text[:500])
-            
-            # Find the attendance table
-            attendance_table = soup.find('table', {'class': 'dataTable'})
+            # Find the attendance table - using the correct classes
+            attendance_table = soup.find('table', {'class': ['table', 'table-bordered', 'table-striped', 'LinkedRows']})
             if not attendance_table:
                 _LOGGER.error("Could not find attendance table in HTML response")
                 _LOGGER.debug("Available tables: %s", [table.get('class', ['no-class']) for table in soup.find_all('table')])
@@ -77,6 +74,7 @@ class ZenPlannerCalendar:
             last_session_date = None
 
             # Process each row in the table
+            _LOGGER.debug("Starting to process table rows")
             rows = attendance_table.find_all('tr')
             _LOGGER.debug("Found %d rows in attendance table", len(rows))
             
