@@ -4,10 +4,12 @@ import re
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
-from ..const import (
+from homeassistant.core import HomeAssistant
+
+from custom_components.fulcrum_tracker.const import (
     API_BASE_URL,
     API_ENDPOINTS,
-    DEFAULT_USER_ID
+    DEFAULT_USER_ID,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -15,13 +17,14 @@ _LOGGER = logging.getLogger(__name__)
 class PRHandler:
     """Handler for ZenPlanner PR data."""
 
-    def __init__(self, auth, user_id: str = DEFAULT_USER_ID) -> None:
+    def __init__(self, hass: HomeAssistant, auth, user_id: Optional[str] = None) -> None:
         """Initialize PR handler."""
+        self.hass = hass
         self.auth = auth
-        self.user_id = user_id
+        self.user_id = user_id or DEFAULT_USER_ID
         self.base_url = f"{API_BASE_URL}{API_ENDPOINTS['pr_page']}"
         self._cached_prs = {}  # Store previous PRs for comparison
-        _LOGGER.debug("PR handler initialized for user %s", user_id)
+        _LOGGER.debug("PR handler initialized for user %s", self.user_id)
 
     async def fetch_prs(self) -> List[Dict[str, str]]:
         """Fetch all PR data."""

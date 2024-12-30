@@ -80,9 +80,9 @@ async def async_setup_entry(
     # Create authentication handler
     auth = ZenPlannerAuth(username, password)
     
-    # Create data handlers
-    calendar = ZenPlannerCalendar(auth)
-    pr_handler = PRHandler(auth, DEFAULT_USER_ID)
+    # Create data handlers - passing hass instance to both
+    calendar = ZenPlannerCalendar(hass=hass, auth=auth)  # Modified
+    pr_handler = PRHandler(hass=hass, auth=auth, user_id=DEFAULT_USER_ID)  # Modified
 
     # Create update coordinator
     coordinator = FulcrumDataUpdateCoordinator(

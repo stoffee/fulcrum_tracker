@@ -20,8 +20,9 @@ _LOGGER = logging.getLogger(__name__)
 class ZenPlannerCalendar:
     """Handler for ZenPlanner calendar and attendance data."""
 
-    def __init__(self, auth) -> None:
+    def __init__(self, hass: HomeAssistant, auth) -> None:
         """Initialize calendar handler."""
+        self.hass = hass
         self.auth = auth
         self.base_url = f"{API_BASE_URL}{API_ENDPOINTS['workouts']}"
         _LOGGER.debug("Calendar handler initialized")
