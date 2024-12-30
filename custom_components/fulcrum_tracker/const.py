@@ -14,6 +14,7 @@ DEFAULT_START_DATE = "2021-11-01"
 DEFAULT_UPDATE_INTERVAL = 30  # minutes
 DEFAULT_PERSON_ID = ""  # Will be provided by user during setup
 DEFAULT_CLIENT_ID = ""  # Will be provided by user during setup
+DEFAULT_MONTHLY_COST = 315.35  # Default monthly cost
 
 # API Constants
 API_BASE_URL = "https://fulcrum.sites.zenplanner.com"
