@@ -1,4 +1,4 @@
-"""ZenPlanner calendar and attendance data handler."""
+"""ZenPlanner calendar data handler."""
 from datetime import datetime, timedelta
 import logging
 import time
@@ -26,104 +26,69 @@ class ZenPlannerCalendar:
         self.base_url = f"{API_BASE_URL}{API_ENDPOINTS['workouts']}"
         _LOGGER.debug("Calendar handler initialized")
 
-    def fetch_month(self, start_date: datetime) -> List[Dict[str, Any]]:
-        """Fetch and process a specific month's training data."""
-        url = f"{self.base_url}?&startdate={start_date.strftime(DATE_FORMAT)}"
-        current_date = datetime.now()
-        
-        _LOGGER.debug("Fetching month: %s", start_date.strftime(MONTH_FORMAT))
-        _LOGGER.debug("URL: %s", url)
+    async def get_day_attendance(self, date: datetime) -> Dict[str, Any]:
+        """Fetch attendance data for a specific day."""
+        _LOGGER.debug("Fetching attendance for: %s", date.strftime(DATE_FORMAT))
         
         try:
+            # Format URL with the specific date
+            url = f"{self.base_url}?&startdate={date.strftime(DATE_FORMAT)}"
+            
             response = self.auth.requests_session.get(url)
             if not response.ok:
-                _LOGGER.error("Failed to fetch month: %s", response.status_code)
-                return []
+                _LOGGER.error("Failed to fetch day: %s", response.status_code)
+                return {"attended": False, "date": date.strftime(DATE_FORMAT)}
                 
             soup = BeautifulSoup(response.text, 'html.parser')
-            days = soup.find_all('div', class_='dayBlock')
+            day_block = soup.find('div', class_='dayBlock', attrs={'date': date.strftime(DATE_FORMAT)})
             
-            month_data = []
-            target_month = start_date.month
+            if not day_block:
+                return {"attended": False, "date": date.strftime(DATE_FORMAT)}
             
-            for day in days:
-                if not day.get('date'):
-                    continue
-                    
-                date_str = day.get('date')
-                day_date = datetime.strptime(date_str, DATE_FORMAT)
-                
-                # Skip if not in target month
-                if day_date.month != target_month:
-                    continue
-                
-                # Skip future dates
-                if day_date.date() > current_date.date():
-                    _LOGGER.debug("Skipping future date: %s", date_str)
-                    continue
-                
-                # Process attended sessions
-                attended = 'attended' in day.get('class', '')
-                if attended:
-                    day_data = {
-                        'date': date_str,
-                        'attended': attended,
-                        'has_results': 'hasResults' in day.get('class', ''),
-                        'is_pr': 'isPR' in day.get('class', ''),
-                        'details': day.get('tooltiptext', '').strip(),
-                        'month_year': day_date.strftime(MONTH_FORMAT)
-                    }
-                    month_data.append(day_data)
-                    
-            return month_data
+            # Process the day's data
+            day_data = {
+                'date': date.strftime(DATE_FORMAT),
+                'attended': 'attended' in day_block.get('class', ''),
+                'has_results': 'hasResults' in day_block.get('class', ''),
+                'is_pr': 'isPR' in day_block.get('class', ''),
+                'details': day_block.get('tooltiptext', '').strip(),
+                'month_year': date.strftime(MONTH_FORMAT)
+            }
+            
+            if day_data['attended']:
+                _LOGGER.info("🏋️ Found attendance for %s!", date.strftime(DATE_FORMAT))
+                if day_data['has_results']:
+                    _LOGGER.info("📝 Results were logged!")
+                if day_data['is_pr']:
+                    _LOGGER.info("🎯 PR achieved on this day!")
+            
+            return day_data
 
         except Exception as err:
-            _LOGGER.error("Error processing month %s: %s", 
-                         start_date.strftime(MONTH_FORMAT), str(err))
-            return []
+            _LOGGER.error("Error fetching day attendance: %s", str(err))
+            return {"attended": False, "date": date.strftime(DATE_FORMAT)}
 
-    def fetch_all_history(self, start_date: Optional[datetime] = None) -> Dict[str, Any]:
+    # Keep existing methods but update fetch_all_history to use the new day fetch
+    async def fetch_all_history(self, start_date: Optional[datetime] = None) -> Dict[str, Any]:
         """Fetch complete training history from start date to present."""
         if start_date is None:
             start_date = datetime.strptime(DEFAULT_START_DATE, DATE_FORMAT)
         
-        _LOGGER.info("Starting historical fetch from %s", 
+        _LOGGER.info("🎯 Starting historical fetch from %s", 
                     start_date.strftime(MONTH_FORMAT))
         
         try:
             all_data = []
             current_date = datetime.now()
-            fetch_date = start_date.replace(day=1)
+            fetch_date = start_date
             
-            # Calculate total months for progress tracking
-            total_months = ((current_date.year - start_date.year) * 12 + 
-                          current_date.month - start_date.month)
-            months_processed = 0
-            
+            # Fetch day by day
             while fetch_date.date() <= current_date.date():
-                _LOGGER.debug("Processing month %d of %d", 
-                            months_processed + 1, total_months)
+                day_data = await self.get_day_attendance(fetch_date)
+                if day_data['attended']:
+                    all_data.append(day_data)
                 
-                month_data = self.fetch_month(fetch_date)
-                if month_data:
-                    _LOGGER.debug("Found %d sessions", len(month_data))
-                    all_data.extend(month_data)
-                else:
-                    _LOGGER.debug("No sessions found for %s", 
-                                fetch_date.strftime(MONTH_FORMAT))
-                
-                # Try to get next month from navigation
-                try:
-                    fetch_date = self._get_next_month_date(fetch_date)
-                except Exception as err:
-                    _LOGGER.warning("Navigation error, using manual increment: %s", 
-                                  str(err))
-                    if fetch_date.month == 12:
-                        fetch_date = datetime(fetch_date.year + 1, 1, 1)
-                    else:
-                        fetch_date = fetch_date.replace(month=fetch_date.month + 1)
-                
-                months_processed += 1
+                fetch_date += timedelta(days=1)
                 time.sleep(DEFAULT_SLEEP_TIME)  # Be nice to their servers
             
             return self._process_history_data(all_data)
