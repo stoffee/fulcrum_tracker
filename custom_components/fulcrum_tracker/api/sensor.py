@@ -21,10 +21,10 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
 )
 
-from .api.auth import ZenPlannerAuth
-from .api.calendar import ZenPlannerCalendar
-from .api.pr import PRHandler
-from .const import (
+from .auth import ZenPlannerAuth
+from .calendar import ZenPlannerCalendar
+from .pr import PRHandler
+from ..const import (
     DOMAIN,
     DEFAULT_UPDATE_INTERVAL,
     DEFAULT_USER_ID,
