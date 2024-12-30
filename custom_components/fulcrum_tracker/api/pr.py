@@ -29,10 +29,17 @@ class PRHandler:
             _LOGGER.debug("Starting PR fetch")
             
             # Verify/refresh authentication
-            if not self.auth.is_logged_in():
+            is_logged_in = await self.hass.async_add_executor_job(
+            self.auth.is_logged_in
+            )
+            if not is_logged_in:
                 _LOGGER.debug("Session expired, re-authenticating")
-                if not self.auth.login():
+                login_success = await self.hass.async_add_executor_job(
+                    self.auth.login
+                )
+                if not login_success:
                     raise ValueError("Failed to authenticate")
+
 
             # Fetch PR page
             response = self.auth.requests_session.get(self.base_url)
