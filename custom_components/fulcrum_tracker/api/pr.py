@@ -2,11 +2,9 @@
 import logging
 import re
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from homeassistant.core import HomeAssistant
-
-from custom_components.fulcrum_tracker.const import (
+from ..const import (
     API_BASE_URL,
     API_ENDPOINTS,
     DEFAULT_USER_ID,
@@ -17,9 +15,8 @@ _LOGGER = logging.getLogger(__name__)
 class PRHandler:
     """Handler for ZenPlanner PR data."""
 
-    def __init__(self, hass: HomeAssistant, auth, user_id: Optional[str] = None) -> None:
+    def __init__(self, auth, user_id: Optional[str] = None) -> None:
         """Initialize PR handler."""
-        self.hass = hass
         self.auth = auth
         self.user_id = user_id or DEFAULT_USER_ID
         self.base_url = f"{API_BASE_URL}{API_ENDPOINTS['pr_page']}"
@@ -32,17 +29,10 @@ class PRHandler:
             _LOGGER.debug("Starting PR fetch")
             
             # Verify/refresh authentication
-            is_logged_in = await self.hass.async_add_executor_job(
-            self.auth.is_logged_in
-            )
-            if not is_logged_in:
+            if not self.auth.is_logged_in():
                 _LOGGER.debug("Session expired, re-authenticating")
-                login_success = await self.hass.async_add_executor_job(
-                    self.auth.login
-                )
-                if not login_success:
+                if not self.auth.login():
                     raise ValueError("Failed to authenticate")
-
 
             # Fetch PR page
             response = self.auth.requests_session.get(self.base_url)
@@ -188,7 +178,7 @@ class PRHandler:
         match = re.search(rf'{field}:\s*["\']([^"\']+)["\']', text)
         return match.group(1) if match else None
 
-    def get_formatted_prs(self) -> Dict[str, any]:
+    def get_formatted_prs(self) -> Dict[str, Any]:
         """Get formatted PR data for Home Assistant."""
         try:
             prs = self.fetch_prs()
@@ -232,7 +222,7 @@ class PRHandler:
         )
 
     @staticmethod
-    def _empty_pr_data() -> Dict[str, any]:
+    def _empty_pr_data() -> Dict[str, Any]:
         """Return empty PR data structure."""
         return {
             "recent_prs": "No PR data available",
