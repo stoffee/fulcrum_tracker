@@ -1,7 +1,7 @@
 """ZenPlanner PR (Personal Record) data handler."""
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ..const import (
@@ -23,7 +23,7 @@ class PRHandler:
         self._cached_prs = {}  # Store previous PRs for comparison
         _LOGGER.debug("PR handler initialized for user %s", self.user_id)
 
-    async def fetch_prs(self) -> List[Dict[str, str]]:
+    def fetch_prs(self) -> List[Dict[str, str]]:
         """Fetch all PR data."""
         try:
             _LOGGER.debug("Starting PR fetch")
@@ -68,81 +68,41 @@ class PRHandler:
             _LOGGER.error("Error fetching PRs: %s", str(err))
             return []
 
-    async def get_todays_prs(self) -> Dict[str, Any]:
-        """Fetch and check just today's PRs."""
+    def get_formatted_prs(self) -> Dict[str, Any]:
+        """Get formatted PR data for Home Assistant."""
         try:
-            _LOGGER.debug("🔍 Checking today's PRs...")
+            prs = self.fetch_prs()
             
-            # Get current PR data
-            current_prs = await self._fetch_raw_prs()
-            
-            if not current_prs:
+            if not prs:
                 return self._empty_pr_data()
 
-            # Look for new PRs (ones with 0 days since)
-            new_prs = []
-            for pr in current_prs:
-                if pr.get('days') == '0':  # Today's PR!
-                    new_prs.append({
+            # Find recent PRs (last 7 days)
+            recent_prs = []
+            recent_count = 0
+            for pr in prs:
+                if pr.get('days') and int(pr['days']) <= 7:
+                    recent_count += 1
+                    recent_prs.append({
                         'name': pr['name'],
                         'value': pr['pr'],
-                        'previous': self._get_previous_value(pr['name'])
+                        'days_ago': pr['days']
                     })
-                    # Update cache
-                    self._cached_prs[pr['name']] = pr['pr']
 
-            if new_prs:
-                _LOGGER.info("🎉 Found %d new PR(s) today!", len(new_prs))
-                for pr in new_prs:
-                    improvement = ""
-                    if pr['previous']:
-                        improvement = f" (up from {pr['previous']})"
-                    _LOGGER.info("💪 New PR for %s: %s%s", 
-                               pr['name'], pr['value'], improvement)
-
+            # Create success response
             return {
-                "recent_prs": self._format_recent_prs(new_prs),
-                "total_prs": len(current_prs),
-                "recent_pr_count": len(new_prs),
-                "pr_details": current_prs
+                "recent_prs": self._format_recent_prs(recent_prs),
+                "total_prs": len(prs),
+                "recent_pr_count": recent_count,
+                "pr_details": prs
             }
 
         except Exception as err:
-            _LOGGER.error("Error checking today's PRs: %s", str(err))
+            _LOGGER.error("Error formatting PRs: %s", str(err))
             return self._empty_pr_data()
 
     def _get_previous_value(self, exercise_name: str) -> Optional[str]:
         """Get the previous PR value for comparison."""
         return self._cached_prs.get(exercise_name)
-
-    async def _fetch_raw_prs(self) -> List[Dict[str, str]]:
-        """Fetch raw PR data from ZenPlanner."""
-        try:
-            response = self.auth.requests_session.get(self.base_url)
-            if not response.ok:
-                raise ConnectionError(f"Failed to fetch PR page: {response.status_code}")
-
-            content = response.text
-            data_match = re.search(
-                r'personResults\.resultSet\s*=\s*\[(.*?)\];', 
-                content, 
-                re.DOTALL
-            )
-            
-            if not data_match:
-                return []
-
-            # Process PR entries
-            entries = list(re.finditer(
-                rf'{{[^}}]*personid\s*:\s*["\']?{self.user_id}[^}}]+}}', 
-                data_match.group(1)
-            ))
-            
-            return self._process_pr_entries(entries)
-
-        except Exception as err:
-            _LOGGER.error("Error fetching raw PRs: %s", str(err))
-            return []
 
     def _process_pr_entries(self, entries: List[re.Match]) -> List[Dict[str, str]]:
         """Process raw PR entries with some enthusiasm!"""
@@ -177,38 +137,6 @@ class PRHandler:
         """Extract a field value from PR entry text."""
         match = re.search(rf'{field}:\s*["\']([^"\']+)["\']', text)
         return match.group(1) if match else None
-
-    def get_formatted_prs(self) -> Dict[str, Any]:
-        """Get formatted PR data for Home Assistant."""
-        try:
-            prs = self.fetch_prs()
-            
-            if not prs:
-                return self._empty_pr_data()
-
-            # Find recent PRs (last 7 days)
-            recent_prs = []
-            recent_count = 0
-            for pr in prs:
-                if pr.get('days') and int(pr['days']) <= 7:
-                    recent_count += 1
-                    recent_prs.append({
-                        'name': pr['name'],
-                        'value': pr['pr'],
-                        'days_ago': pr['days']
-                    })
-
-            # Create success response
-            return {
-                "recent_prs": self._format_recent_prs(recent_prs),
-                "total_prs": len(prs),
-                "recent_pr_count": recent_count,
-                "pr_details": prs
-            }
-
-        except Exception as err:
-            _LOGGER.error("Error formatting PRs: %s", str(err))
-            return self._empty_pr_data()
 
     @staticmethod
     def _format_recent_prs(prs: List[Dict[str, str]]) -> str:

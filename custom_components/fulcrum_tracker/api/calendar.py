@@ -1,6 +1,6 @@
 """ZenPlanner calendar data handler."""
-from datetime import datetime, timedelta
 import logging
+from datetime import datetime, timedelta
 import time
 from typing import Any, Dict, List, Optional
 
@@ -27,86 +27,7 @@ class ZenPlannerCalendar:
         self.base_url = f"{API_BASE_URL}{API_ENDPOINTS['workouts']}"
         _LOGGER.debug("Calendar handler initialized")
 
-    async def get_day_attendance(self, date: datetime) -> Dict[str, Any]:
-        """Fetch attendance data for a specific day."""
-        _LOGGER.debug("Fetching attendance for: %s", date.strftime(DATE_FORMAT))
-        
-        try:
-            # Format URL with the specific date
-            url = f"{self.base_url}?&startdate={date.strftime(DATE_FORMAT)}"
-            
-            response = self.session.get(url)
-            if not response.ok:
-                _LOGGER.error("Failed to fetch day: %s", response.status_code)
-                return {"attended": False, "date": date.strftime(DATE_FORMAT)}
-                
-            soup = BeautifulSoup(response.text, 'html.parser')
-            day_block = soup.find('div', class_='dayBlock', attrs={'date': date.strftime(DATE_FORMAT)})
-            
-            if not day_block:
-                return {"attended": False, "date": date.strftime(DATE_FORMAT)}
-            
-            # Process the day's data
-            day_data = {
-                'date': date.strftime(DATE_FORMAT),
-                'attended': 'attended' in day_block.get('class', ''),
-                'has_results': 'hasResults' in day_block.get('class', ''),
-                'is_pr': 'isPR' in day_block.get('class', ''),
-                'details': day_block.get('tooltiptext', '').strip(),
-                'month_year': date.strftime(MONTH_FORMAT)
-            }
-            
-            if day_data['attended']:
-                _LOGGER.info("🏋️ Found attendance for %s!", date.strftime(DATE_FORMAT))
-                if day_data['has_results']:
-                    _LOGGER.info("📝 Results were logged!")
-                if day_data['is_pr']:
-                    _LOGGER.info("🎯 PR achieved on this day!")
-            
-            return day_data
-
-        except Exception as err:
-            _LOGGER.error("Error fetching day attendance: %s", str(err))
-            return {"attended": False, "date": date.strftime(DATE_FORMAT)}
-
-    async def fetch_all_history(self, start_date: Optional[datetime] = None) -> Dict[str, Any]:
-        """Fetch complete training history from start date to present."""
-        if start_date is None:
-            start_date = datetime.strptime(DEFAULT_START_DATE, DATE_FORMAT)
-        
-        _LOGGER.info("🎯 Starting historical fetch from %s", 
-                    start_date.strftime(MONTH_FORMAT))
-        
-        try:
-            all_data = []
-            current_date = datetime.now()
-            fetch_date = start_date
-            
-            while fetch_date.date() <= current_date.date():
-                month_data = await self.fetch_month(fetch_date)
-                
-                if month_data:
-                    all_data.extend(month_data)
-                
-                # Move to next month using calendar navigation or fallback
-                try:
-                    fetch_date = await self._get_next_month_date(fetch_date)
-                except ValueError:
-                    # Fallback to manual increment
-                    if fetch_date.month == 12:
-                        fetch_date = datetime(fetch_date.year + 1, 1, 1)
-                    else:
-                        fetch_date = fetch_date.replace(month=fetch_date.month + 1)
-                
-                time.sleep(DEFAULT_SLEEP_TIME)  # Be nice to their servers
-            
-            return self._process_history_data(all_data)
-
-        except Exception as err:
-            _LOGGER.error("Error fetching history: %s", str(err))
-            return self._empty_attendance_data()
-
-    async def fetch_month(self, start_date: datetime) -> List[Dict[str, Any]]:
+    def fetch_month(self, start_date: datetime) -> List[Dict[str, Any]]:
         """Fetch a specific month's data."""
         _LOGGER.debug(f"Fetching month: {start_date.strftime('%B %Y')}")
         
@@ -155,7 +76,7 @@ class ZenPlannerCalendar:
                     
         return month_data
 
-    async def _get_next_month_date(self, current_date: datetime) -> datetime:
+    def _get_next_month_date(self, current_date: datetime) -> datetime:
         """Get next month's date from calendar navigation."""
         response = self.session.get(
             f"{self.base_url}?&startdate={current_date.strftime(DATE_FORMAT)}"
@@ -171,29 +92,10 @@ class ZenPlannerCalendar:
             except ValueError:
                 raise ValueError(f"Invalid date format in navigation: {next_date_str}")
         
-        raise ValueError("No next month link found")
-
-    def _process_history_data(self, history: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Process raw history data into structured format."""
-        if not history:
-            return self._empty_attendance_data()
-
-        # Sort chronologically
-        history.sort(key=lambda x: datetime.strptime(x['date'], DATE_FORMAT))
-        
-        # Get current month stats
-        current_month = datetime.now().strftime(MONTH_FORMAT)
-        current_month_sessions = sum(
-            1 for session in history 
-            if session['month_year'] == current_month
-        )
-        
-        return {
-            "total_sessions": len(history),
-            "monthly_sessions": current_month_sessions,
-            "last_session": history[-1]['date'] if history else None,
-            "all_sessions": history
-        }
+        # Fallback to manual increment
+        if current_date.month == 12:
+            return datetime(current_date.year + 1, 1, 1)
+        return current_date.replace(month=current_date.month + 1)
 
     def get_attendance_data(self) -> Dict[str, Any]:
         """Get formatted attendance data for Home Assistant."""
@@ -218,13 +120,15 @@ class ZenPlannerCalendar:
 
             # Fetch data month by month
             current_month = start_date
+            _LOGGER.debug(f"Fetching data for {current_month.strftime('%B %Y')}")
+            
             while current_month <= current_date:
-                _LOGGER.debug(f"Fetching data for {current_month.strftime('%B %Y')}")
                 month_data = self.fetch_month(current_month)
                 all_sessions.extend(month_data)
                 
                 # Move to next month
-                current_month = (current_month.replace(day=1) + timedelta(days=32)).replace(day=1)
+                current_month = self._get_next_month_date(current_month)
+                time.sleep(DEFAULT_SLEEP_TIME)
 
             # Process all sessions
             current_month_str = current_date.strftime('%B %Y')
