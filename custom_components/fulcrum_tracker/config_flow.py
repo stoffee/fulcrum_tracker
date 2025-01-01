@@ -1,4 +1,3 @@
-"""Config flow for Fulcrum Fitness Tracker integration."""
 from __future__ import annotations
 
 import logging
@@ -20,7 +19,6 @@ from .const import (
     CONF_MONTHLY_COST,
     DEFAULT_MONTHLY_COST,
 )
-from .api.auth import ZenPlannerAuth
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,10 +47,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # Create unique ID based on username
                 await self.async_set_unique_id(user_input[CONF_USERNAME])
                 self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=f"Fulcrum ({user_input[CONF_USERNAME]})",
-                    data=user_input,
-                )
+                self.context["user_input"] = user_input
+                return await self.async_step_upload_json()
 
         return self.async_show_form(
             step_id="user",
@@ -68,33 +64,60 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_validate_input(self, data: dict[str, Any]) -> None:
-        """Validate the user input allows us to connect.
-        
-        Data passed to this method is automatically saved to the config entry.
-        Invalid data raises an exception that shows up as a persistent error to the user.
-        """
-        # Create ZenPlanner auth instance
-        auth = ZenPlannerAuth(data[CONF_USERNAME], data[CONF_PASSWORD])
-        
-        # Test the connection and credentials
+    async def async_step_upload_json(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Step to upload the service account JSON file."""
+        errors = {}
+
+        if user_input is not None:
+            try:
+                # Validate JSON structure
+                json_content = user_input.get("service_account_json")
+                self._validate_json(json_content)
+
+                # Save the file securely
+                json_path = self.hass.config.path("fulcrum_service_account.json")
+                with open(json_path, "w") as json_file:
+                    json_file.write(json_content)
+
+                # Proceed to create entry
+                return self.async_create_entry(
+                    title=f"Fulcrum ({self.context['user_input'][CONF_USERNAME]})",
+                    data={**self.context["user_input"], "service_account_path": json_path},
+                )
+
+            except InvalidJSON:
+                errors["base"] = "invalid_json"
+            except Exception as e:
+                _LOGGER.exception("Unexpected exception: %s", e)
+                errors["base"] = "unknown"
+
+        return self.async_show_form(
+            step_id="upload_json",
+            data_schema=vol.Schema({vol.Required("service_account_json"): str}),
+            errors=errors,
+        )
+
+    @staticmethod
+    def _validate_json(json_content: str) -> None:
+        """Validate the service account JSON file."""
+        import json
+
         try:
-            # Convert to async
-            result = await self.hass.async_add_executor_job(auth.login)
-            if not result:
-                raise InvalidAuth
-        except Exception as ex:
-            _LOGGER.error("Connection test failed: %s", ex)
-            raise CannotConnect from ex
+            parsed = json.loads(json_content)
+            required_keys = ["type", "project_id", "private_key_id", "private_key", "client_email"]
 
-        # Validate monthly cost is positive
-        if data.get(CONF_MONTHLY_COST, DEFAULT_MONTHLY_COST) <= 0:
-            raise vol.Invalid("Monthly cost must be greater than 0")
-
+            if not all(key in parsed for key in required_keys):
+                raise InvalidJSON("Missing required keys in JSON.")
+        except json.JSONDecodeError:
+            raise InvalidJSON("Invalid JSON format.")
 
 class CannotConnect(HomeAssistantError):
     """Error to indicate we cannot connect."""
 
-
 class InvalidAuth(HomeAssistantError):
     """Error to indicate there is invalid auth."""
+
+class InvalidJSON(HomeAssistantError):
+    """Error to indicate the uploaded JSON is invalid."""
