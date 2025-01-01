@@ -36,19 +36,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 await self.async_validate_input(user_input)
+                self.context["user_input"] = user_input  # Store valid input
+                return await self.async_step_upload_json()  # Proceed to JSON upload
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception")
+            except Exception as e:  # Catch unexpected exceptions
+                _LOGGER.exception("Unexpected exception: %s", e)  # Add detailed logging
                 errors["base"] = "unknown"
-            else:
-                # Create unique ID based on username
-                await self.async_set_unique_id(user_input[CONF_USERNAME])
-                self._abort_if_unique_id_configured()
-                self.context["user_input"] = user_input
-                return await self.async_step_upload_json()
 
         return self.async_show_form(
             step_id="user",
@@ -64,6 +60,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+
     async def async_step_upload_json(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -72,21 +69,18 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
-                # Validate JSON structure
                 json_content = user_input.get("service_account_json")
                 self._validate_json(json_content)
 
-                # Save the file securely
+                # Save the JSON file securely
                 json_path = self.hass.config.path("fulcrum_service_account.json")
                 with open(json_path, "w") as json_file:
                     json_file.write(json_content)
 
-                # Proceed to create entry
                 return self.async_create_entry(
                     title=f"Fulcrum ({self.context['user_input'][CONF_USERNAME]})",
                     data={**self.context["user_input"], "service_account_path": json_path},
                 )
-
             except InvalidJSON:
                 errors["base"] = "invalid_json"
             except Exception as e:
@@ -98,6 +92,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({vol.Required("service_account_json"): str}),
             errors=errors,
         )
+
 
     @staticmethod
     def _validate_json(json_content: str) -> None:
@@ -112,6 +107,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 raise InvalidJSON("Missing required keys in JSON.")
         except json.JSONDecodeError:
             raise InvalidJSON("Invalid JSON format.")
+
 
 class CannotConnect(HomeAssistantError):
     """Error to indicate we cannot connect."""
