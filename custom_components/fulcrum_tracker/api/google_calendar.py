@@ -73,21 +73,22 @@ class AsyncGoogleCalendarHandler:
         return False
 
     def filter_travel_dates(self, events: list) -> List[Dict[str, Any]]:
-        """
-        Filter events to identify travel dates and training gaps.
-        Returns a list of travel periods.
-        """
+        """Filter events to identify travel dates and training gaps."""
         travel_periods = []
         current_period = None
 
-        for event in sorted(events, key=lambda x: x['start']):
+        for event in sorted(events, key=lambda x: x.get('date', '')):  # Changed from x['start']
             if self.is_travel_event(event):
-                start_date = event['start'][:10]  # Get YYYY-MM-DD
-                end_date = event.get('end', event['start'])[:10]
+                # Get dates safely with fallbacks
+                start_date = event.get('date', '')  # Changed from event['start']
+                end_date = event.get('date', '')    # Default to start date if no end date
+                
+                if not start_date:  # Skip events without dates
+                    continue
 
                 if current_period is None:
                     current_period = {
-                        'start': start_date, 
+                        'start': start_date,
                         'end': end_date,
                         'type': 'travel',
                         'events': [event]
@@ -100,7 +101,7 @@ class AsyncGoogleCalendarHandler:
                     # Start new period
                     travel_periods.append(current_period)
                     current_period = {
-                        'start': start_date, 
+                        'start': start_date,
                         'end': end_date,
                         'type': 'travel',
                         'events': [event]
@@ -293,18 +294,28 @@ class AsyncGoogleCalendarHandler:
             raise ValueError(ERROR_CALENDAR_FETCH)
 
     async def _process_event(self, event: Dict[str, Any], search_term: str) -> Optional[Dict[str, Any]]:
-        """Process a single calendar event."""
+        """Process a single calendar event with better error handling."""
         try:
-            start = event['start'].get('dateTime', event['start'].get('date'))
+            # Get start time safely
+            start = None
+            if 'start' in event:
+                start = event['start'].get('dateTime') or event['start'].get('date')
+            
             if not start:
+                _LOGGER.debug("Skipping event without start time: %s", event.get('summary', 'Unknown'))
                 return None
 
             # Normalize timezone
-            start_dt = self._normalize_timezone(start)
-            
+            try:
+                start_dt = self._normalize_timezone(start)
+            except (ValueError, TypeError) as e:
+                _LOGGER.debug("Failed to normalize timezone for event %s: %s", 
+                            event.get('summary', 'Unknown'), str(e))
+                return None
+
             # Extract instructor if available
             instructor = "Unknown"
-            if 'description' in event:
+            if event.get('description'):
                 description = event['description']
                 if 'Instructor:' in description:
                     instructor = description.split('Instructor:')[1].split('\n')[0].strip()
@@ -312,16 +323,17 @@ class AsyncGoogleCalendarHandler:
             return {
                 'date': start_dt.strftime('%Y-%m-%d'),
                 'time': start_dt.strftime('%H:%M'),
-                'subject': event['summary'],
+                'subject': event.get('summary', 'Unknown Event'),
                 'instructor': instructor,
                 'search_term': search_term,
                 'description': event.get('description', ''),
                 'location': event.get('location', ''),
-                'event_id': event['id']
+                'event_id': event.get('id', '')
             }
 
-        except (KeyError, ValueError) as err:
-            _LOGGER.warning("Error processing event: %s", str(err))
+        except Exception as err:
+            _LOGGER.warning("Error processing event %s: %s", 
+                        event.get('summary', 'Unknown'), str(err))
             return None
 
     @staticmethod
