@@ -8,6 +8,8 @@ CONF_PERSON_ID = "person_id"
 CONF_CLIENT_ID = "client_id"
 CONF_START_DATE = "start_date"
 CONF_MONTHLY_COST = "monthly_cost"
+CONF_CALENDAR_ID = "calendar_id"
+CONF_SERVICE_ACCOUNT_PATH = "service_account_path"
 
 # Default Values
 DEFAULT_START_DATE = "2021-11-01"
@@ -16,6 +18,20 @@ DEFAULT_PERSON_ID = ""  # Will be provided by user during setup
 DEFAULT_USER_ID = DEFAULT_PERSON_ID 
 DEFAULT_CLIENT_ID = ""  # Will be provided by user during setup
 DEFAULT_MONTHLY_COST = 315.35  # Default monthly cost
+DEFAULT_CACHE_TTL = 3600  # 1 hour in seconds
+
+# Calendar Search Terms
+CALENDAR_SEARCH_TERMS = [
+    "Small Group Personal Training Hawthorne",
+    "Small Group Training",
+    "Small Group",
+    "Fulcrum",
+    "exercise",
+    "fix back",
+    "fucking back exercise",
+    "Do the back muscles",
+    "Tabor Stair Climb"
+]
 
 # API Constants
 API_BASE_URL = "https://fulcrum.sites.zenplanner.com"
@@ -33,6 +49,8 @@ ERROR_AUTH = "Authentication failed"
 ERROR_CONNECTION = "Connection failed"
 ERROR_TIMEOUT = "Request timed out"
 ERROR_INVALID_DATA = "Invalid data received"
+ERROR_CALENDAR_AUTH = "Google Calendar authentication failed"
+ERROR_CALENDAR_FETCH = "Failed to fetch calendar events"
 
 # Data processing
 DEFAULT_SLEEP_TIME = 2  # seconds between requests

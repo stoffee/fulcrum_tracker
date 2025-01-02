@@ -62,6 +62,41 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle the initial step - ZenPlanner credentials."""
+        errors = {}
+
+        if user_input is not None:
+            try:
+                # Inline validation of user input
+                if not self._validate_user_input(user_input):
+                    raise InvalidAuth("Invalid user credentials provided.")
+                
+                # Store ZenPlanner credentials and proceed to calendar step
+                self.context["zenplanner"] = user_input
+                return await self.async_step_calendar()
+            except InvalidAuth:
+                errors["base"] = "invalid_auth"
+            except Exception as e:  # Catch unexpected exceptions
+                _LOGGER.exception("Unexpected exception: %s", e)
+                errors["base"] = "unknown"
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_USERNAME): str,
+                    vol.Required(CONF_PASSWORD): str,
+                    vol.Required(CONF_PERSON_ID): str,
+                    vol.Required(CONF_CLIENT_ID): str,
+                    vol.Optional(CONF_MONTHLY_COST, default=DEFAULT_MONTHLY_COST): cv.positive_float,
+                }
+            ),
+            errors=errors,
+        )
+
     async def async_step_upload_json(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:

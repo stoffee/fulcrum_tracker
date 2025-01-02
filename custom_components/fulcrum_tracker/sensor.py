@@ -23,11 +23,14 @@ from homeassistant.helpers.update_coordinator import (
 
 from .api.auth import ZenPlannerAuth
 from .api.calendar import ZenPlannerCalendar
+from .api.google_calendar import GoogleCalendarHandler
 from .api.pr import PRHandler
 from .const import (
     DOMAIN,
     DEFAULT_UPDATE_INTERVAL,
     DEFAULT_USER_ID,
+    CONF_CALENDAR_ID,
+    CONF_SERVICE_ACCOUNT_PATH,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -66,6 +69,19 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         name="Last Training Session",
         icon="mdi:calendar-clock",
     ),
+    # New calendar-specific sensors
+    SensorEntityDescription(
+        key="next_session",
+        name="Next Training Session",
+        icon="mdi:calendar-arrow-right",
+    ),
+    SensorEntityDescription(
+        key="calendar_total_sessions",
+        name="Calendar Total Sessions",
+        icon="mdi:calendar-check",
+        native_unit_of_measurement="sessions",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+    ),
 )
 
 async def async_setup_entry(
@@ -76,13 +92,16 @@ async def async_setup_entry(
     """Set up the Fulcrum Tracker sensors."""
     username = config_entry.data[CONF_USERNAME]
     password = config_entry.data[CONF_PASSWORD]
+    calendar_id = config_entry.data[CONF_CALENDAR_ID]
+    service_account_path = config_entry.data[CONF_SERVICE_ACCOUNT_PATH]
 
-    # Create authentication handler
-    auth = ZenPlannerAuth(username, password)
-    
     # Create data handlers
-    calendar = ZenPlannerCalendar(auth)  # Removed hass parameter
-    pr_handler = PRHandler(auth, DEFAULT_USER_ID)  # Removed hass parameter
+    auth = ZenPlannerAuth(username, password)
+    calendar = ZenPlannerCalendar(auth)
+    pr_handler = PRHandler(auth, DEFAULT_USER_ID)
+    
+    # Initialize Google Calendar handler
+    google_calendar = GoogleCalendarHandler(service_account_path, calendar_id)
 
     # Create update coordinator
     coordinator = FulcrumDataUpdateCoordinator(
@@ -91,6 +110,7 @@ async def async_setup_entry(
         name="fulcrum_tracker",
         calendar=calendar,
         pr_handler=pr_handler,
+        google_calendar=google_calendar,
     )
 
     # Fetch initial data
@@ -108,7 +128,6 @@ async def async_setup_entry(
 
     async_add_entities(entities)
 
-
 class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching Fulcrum data."""
 
@@ -119,6 +138,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         name: str,
         calendar: ZenPlannerCalendar,
         pr_handler: PRHandler,
+        google_calendar: GoogleCalendarHandler,
     ) -> None:
         """Initialize."""
         super().__init__(
@@ -129,12 +149,12 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         )
         self.calendar = calendar
         self.pr_handler = pr_handler
-        self._is_initial_load = True
+        self.google_calendar = google_calendar
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch data from Fulcrum."""
+        """Fetch data from Fulcrum and Google Calendar."""
         try:
-            # Get calendar/attendance data
+            # Get ZenPlanner data
             attendance_data = await self.hass.async_add_executor_job(
                 self.calendar.get_attendance_data
             )
@@ -144,8 +164,13 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 self.pr_handler.get_formatted_prs
             )
 
+            # Get Google Calendar data
+            calendar_events = await self.google_calendar.get_calendar_events()
+            next_session = await self.google_calendar.get_next_session()
+
             # Combine all data
             return {
+                # ZenPlanner data
                 "total_sessions": attendance_data["total_sessions"],
                 "monthly_sessions": attendance_data["monthly_sessions"],
                 "last_session": attendance_data["last_session"],
@@ -154,12 +179,16 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 "recent_pr_count": pr_data["recent_pr_count"],
                 "all_sessions": attendance_data["all_sessions"],
                 "pr_details": pr_data["pr_details"],
+                
+                # Google Calendar data
+                "calendar_events": calendar_events,
+                "next_session": next_session,
+                "calendar_total_sessions": len(calendar_events) if calendar_events else 0,
             }
 
         except Exception as err:
             self.logger.error("Error fetching data: %s", err)
             raise
-
 
 class FulcrumSensor(CoordinatorEntity, SensorEntity):
     """Representation of a Fulcrum sensor."""
@@ -186,6 +215,12 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
         """Return the state of the sensor."""
         if self.coordinator.data is None:
             return None
+            
+        # Format next session nicely if that's what we're showing
+        if self.entity_description.key == "next_session" and self.coordinator.data.get("next_session"):
+            next_session = self.coordinator.data["next_session"]
+            return f"{next_session['date']} {next_session['time']} with {next_session['instructor']}"
+            
         return self.coordinator.data.get(self.entity_description.key)
 
     @property
@@ -198,43 +233,34 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
         if self.entity_description.key == "total_sessions":
             attrs["sessions_this_month"] = data.get("monthly_sessions", 0)
             attrs["last_session_date"] = data.get("last_session")
+            attrs["calendar_total"] = data.get("calendar_total_sessions", 0)
             
-            if "all_sessions" in data:
-                # Calculate weekly stats
+            if "calendar_events" in data:
+                # Calculate weekly stats from both sources
                 today = datetime.now().date()
                 week_start = today - timedelta(days=today.weekday())
                 week_sessions = sum(
-                    1 for session in data["all_sessions"]
+                    1 for session in data["calendar_events"]
                     if datetime.strptime(session['date'], '%Y-%m-%d').date() >= week_start
                 )
                 attrs["sessions_this_week"] = week_sessions
 
-        elif self.entity_description.key == "recent_prs":
-            attrs["total_prs"] = data.get("total_prs", 0)
-            attrs["recent_pr_count"] = data.get("recent_pr_count", 0)
-            
-            if "pr_details" in data:
-                # Add most recent PRs with dates
-                recent_prs = [
-                    pr for pr in data["pr_details"]
-                    if pr.get('days') and int(pr['days']) <= 7
-                ]
-                attrs["recent_pr_details"] = recent_prs
+        elif self.entity_description.key == "next_session" and data.get("next_session"):
+            next_session = data["next_session"]
+            attrs.update({
+                "instructor": next_session.get("instructor", "Unknown"),
+                "location": next_session.get("location", ""),
+                "description": next_session.get("description", ""),
+                "event_id": next_session.get("event_id", ""),
+            })
 
-        elif self.entity_description.key == "monthly_sessions":
-            if "all_sessions" in data:
-                # Add monthly trend
+        elif self.entity_description.key == "calendar_total_sessions":
+            if "calendar_events" in data:
+                # Add monthly breakdown
                 monthly_counts = {}
-                for session in data["all_sessions"]:
+                for session in data["calendar_events"]:
                     month = datetime.strptime(session['date'], '%Y-%m-%d').strftime('%Y-%m')
                     monthly_counts[month] = monthly_counts.get(month, 0) + 1
-                attrs["monthly_trend"] = monthly_counts
-
-        elif self.entity_description.key == "last_session":
-            if "all_sessions" in data and data["all_sessions"]:
-                last_session = data["all_sessions"][-1]
-                attrs["had_results"] = last_session.get("has_results", False)
-                attrs["was_pr"] = last_session.get("is_pr", False)
-                attrs["details"] = last_session.get("details", "")
+                attrs["monthly_breakdown"] = monthly_counts
 
         return attrs
