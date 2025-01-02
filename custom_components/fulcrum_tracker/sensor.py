@@ -39,30 +39,35 @@ _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(minutes=DEFAULT_UPDATE_INTERVAL)
 
 SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
+    # Source-specific session counts
     SensorEntityDescription(
-        key="total_sessions",
-        name="Total Training Sessions",
-        icon="mdi:dumbbell",
+        key="zenplanner_fulcrum_sessions",
+        name="ZenPlanner Fulcrum Sessions",
+        icon="mdi:dumbbell",  # Changed to dumbbell for ZenPlanner
         native_unit_of_measurement="sessions",
         state_class=SensorStateClass.TOTAL_INCREASING,
     ),
+    SensorEntityDescription(
+        key="google_calendar_fulcrum_sessions",
+        name="Google Calendar Fulcrum Sessions",
+        icon="mdi:calendar-check",  # Kept calendar for Google Calendar
+        native_unit_of_measurement="sessions",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+    ),
+    # Combined total
+    SensorEntityDescription(
+        key="total_fulcrum_sessions",
+        name="Total Fulcrum Sessions",
+        icon="mdi:dumbbell-variant",  # Different dumbbell icon for combined total
+        native_unit_of_measurement="sessions",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+    ),
+    # Time-based metrics
     SensorEntityDescription(
         key="monthly_sessions",
         name="Monthly Training Sessions",
         icon="mdi:calendar-month",
         native_unit_of_measurement="sessions",
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    SensorEntityDescription(
-        key="recent_prs",
-        name="Recent PRs",
-        icon="mdi:trophy",
-    ),
-    SensorEntityDescription(
-        key="total_prs",
-        name="Total PRs",
-        icon="mdi:trophy-variant",
-        native_unit_of_measurement="PRs",
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
@@ -75,12 +80,18 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         name="Next Training Session",
         icon="mdi:calendar-arrow-right",
     ),
+    # Performance metrics
     SensorEntityDescription(
-        key="calendar_total_sessions",
-        name="Calendar Total Sessions",
-        icon="mdi:calendar-check",
-        native_unit_of_measurement="sessions",
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        key="recent_prs",
+        name="Recent PRs",
+        icon="mdi:trophy",
+    ),
+    SensorEntityDescription(
+        key="total_prs",
+        name="Total PRs",
+        icon="mdi:trophy-variant",
+        native_unit_of_measurement="PRs",
+        state_class=SensorStateClass.MEASUREMENT,
     ),
 )
 
@@ -194,6 +205,39 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as err:
             self.logger.error("Error fetching data: %s", err)
             raise
+
+    def _reconcile_sessions(self, zenplanner_data: dict, calendar_events: list) -> int:
+        """Reconcile session counts between ZenPlanner and Google Calendar."""
+        try:
+            # Get all session dates from ZenPlanner
+            zen_dates = set()
+            if "all_sessions" in zenplanner_data:
+                for session in zenplanner_data["all_sessions"]:
+                    if isinstance(session, dict) and "date" in session:
+                        zen_dates.add(session["date"])
+
+            # Get all session dates from Google Calendar
+            calendar_dates = set()
+            if calendar_events:
+                for event in calendar_events:
+                    if isinstance(event, dict) and "date" in event:
+                        calendar_dates.add(event["date"])
+
+            # Find union of all unique dates
+            all_unique_dates = zen_dates.union(calendar_dates)
+            
+            # Count overlapping dates
+            overlapping_dates = zen_dates.intersection(calendar_dates)
+            
+            _LOGGER.debug(
+                "Session reconciliation: ZenPlanner=%d, Calendar=%d, Unique=%d, Overlapping=%d",
+                len(zen_dates), len(calendar_dates), len(all_unique_dates), len(overlapping_dates)
+            )
+
+            return len(all_unique_dates)
+        except Exception as err:
+            _LOGGER.error("Error reconciling sessions: %s", str(err))
+            return 0
 
     async def _async_stop(self) -> None:
         """Clean up resources when stopping."""
