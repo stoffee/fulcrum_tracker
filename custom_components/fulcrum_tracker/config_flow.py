@@ -35,15 +35,17 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
-                await self.async_validate_input(user_input)
-                self.context["user_input"] = user_input  # Store valid input
-                return await self.async_step_upload_json()  # Proceed to JSON upload
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
+                # Inline validation of user input
+                if not self._validate_user_input(user_input):
+                    raise InvalidAuth("Invalid user credentials provided.")
+                
+                # Store user input and proceed to JSON upload step
+                self.context["user_input"] = user_input
+                return await self.async_step_upload_json()
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
             except Exception as e:  # Catch unexpected exceptions
-                _LOGGER.exception("Unexpected exception: %s", e)  # Add detailed logging
+                _LOGGER.exception("Unexpected exception: %s", e)
                 errors["base"] = "unknown"
 
         return self.async_show_form(
@@ -59,7 +61,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
             errors=errors,
         )
-
 
     async def async_step_upload_json(
         self, user_input: dict[str, Any] | None = None
@@ -93,6 +94,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    @staticmethod
+    def _validate_user_input(user_input: dict[str, Any]) -> bool:
+        """Validate user input for initial form."""
+        # Placeholder validation (replace with actual checks)
+        return all(user_input.values())
 
     @staticmethod
     def _validate_json(json_content: str) -> None:
@@ -108,12 +114,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except json.JSONDecodeError:
             raise InvalidJSON("Invalid JSON format.")
 
-
-class CannotConnect(HomeAssistantError):
-    """Error to indicate we cannot connect."""
-
 class InvalidAuth(HomeAssistantError):
-    """Error to indicate there is invalid auth."""
+    """Error to indicate invalid authentication."""
 
 class InvalidJSON(HomeAssistantError):
     """Error to indicate the uploaded JSON is invalid."""
+
+class CannotConnect(HomeAssistantError):
+    """Error to indicate we cannot connect."""
