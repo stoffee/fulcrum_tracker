@@ -12,13 +12,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Fulcrum Tracker from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     
-    # Store the credentials
+    # Store config data
     hass.data[DOMAIN][entry.entry_id] = {
         "username": entry.data["username"],
         "password": entry.data["password"]
     }
     
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # Schedule delayed data collection
+    async def delayed_setup():
+        await asyncio.sleep(120)  # 2 minute delay
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        
+    hass.async_create_task(delayed_setup())
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
