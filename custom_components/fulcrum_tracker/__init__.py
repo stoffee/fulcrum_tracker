@@ -1,10 +1,14 @@
 """The Fulcrum Fitness Tracker integration."""
 from __future__ import annotations
 
+import asyncio
+import logging
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
+_LOGGER = logging.getLogger(__name__)
 DOMAIN = "fulcrum_tracker"
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 
