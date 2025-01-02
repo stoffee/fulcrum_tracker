@@ -159,27 +159,23 @@ class FirstRunHandler:
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize the handler."""
         self.hass = hass
-        self._storage_key = f"{DOMAIN}.first_run_completed"
+        self.store = hass.helpers.storage.Store(version=1, key=f"{DOMAIN}_initialization")
         
     async def is_first_run(self) -> bool:
         """Check if this is the first run."""
-        return not await self.hass.helpers.storage.async_storage_get(self._storage_key)
+        data = await self.store.async_load()
+        return data is None
         
     async def mark_initialized(self, stats: dict) -> None:
         """Mark system as initialized with initial stats."""
-        await self.hass.helpers.storage.async_storage_set(
-            self._storage_key,
-            {
-                "initialized_at": datetime.now().isoformat(),
-                "initial_stats": stats,
-                "version": 1
-            }
-        )
+        await self.store.async_save({
+            "initialized_at": datetime.now().isoformat(),
+            "initial_stats": stats,
+        })
         
     async def get_initialization_stats(self) -> Optional[dict]:
         """Get stats from when system was first initialized."""
-        data = await self.hass.helpers.storage.async_storage_get(self._storage_key)
-        return data if data else None
+        return await self.store.async_load()
 
 class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching Fulcrum data."""
