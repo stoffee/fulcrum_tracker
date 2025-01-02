@@ -1,10 +1,12 @@
 """Configuration flow for Fulcrum Tracker integration."""
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
 import voluptuous as vol
+import aiofiles
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
@@ -102,12 +104,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 json_content = user_input.get("service_account_json")
-                self._validate_json(json_content)
+                await self._validate_json(json_content)
 
                 # Save the JSON file securely
                 json_path = self.hass.config.path("fulcrum_service_account.json")
-                with open(json_path, "w") as json_file:
-                    json_file.write(json_content)
+                async with aiofiles.open(json_path, "w") as json_file:
+                    await json_file.write(json_content)
 
                 # Combine all configuration data
                 config_data = {
@@ -141,10 +143,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return all(user_input.values())
 
     @staticmethod
-    def _validate_json(json_content: str) -> None:
+    async def _validate_json(json_content: str) -> None:
         """Validate the service account JSON file."""
-        import json
-
         try:
             parsed = json.loads(json_content)
             required_keys = ["type", "project_id", "private_key_id", "private_key", "client_email"]

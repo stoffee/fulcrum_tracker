@@ -1,6 +1,7 @@
 """Sensor platform for Fulcrum Tracker integration."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Any, Optional
@@ -149,22 +150,23 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         self.calendar = calendar
         self.pr_handler = pr_handler
         self.google_calendar = google_calendar
+        self._hass = hass
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from Fulcrum and Google Calendar."""
         try:
             # Create tasks for parallel execution
-            attendance_task = self.hass.async_add_executor_job(
+            attendance_task = self._hass.async_add_executor_job(
                 self.calendar.get_attendance_data
             )
-            pr_task = self.hass.async_add_executor_job(
+            pr_task = self._hass.async_add_executor_job(
                 self.pr_handler.get_formatted_prs
             )
             calendar_task = self.google_calendar.get_calendar_events()
             next_session_task = self.google_calendar.get_next_session()
 
             # Wait for all tasks to complete
-            attendance_data, pr_data, calendar_events, next_session = await self.hass.async_gather(
+            attendance_data, pr_data, calendar_events, next_session = await asyncio.gather(
                 attendance_task,
                 pr_task,
                 calendar_task,
