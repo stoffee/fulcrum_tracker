@@ -164,9 +164,9 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         self._hass = hass
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch data from Fulcrum and Google Calendar."""
         try:
-            # Create tasks for parallel execution
+            _LOGGER.debug("Starting data update")
+            
             attendance_task = self._hass.async_add_executor_job(
                 self.calendar.get_attendance_data
             )
@@ -175,71 +175,57 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             )
             calendar_task = self.google_calendar.get_calendar_events()
             next_session_task = self.google_calendar.get_next_session()
-
-            # Wait for all tasks to complete
+            
             attendance_data, pr_data, calendar_events, next_session = await asyncio.gather(
-                attendance_task,
-                pr_task,
-                calendar_task,
-                next_session_task,
+                attendance_task, pr_task, calendar_task, next_session_task,
             )
 
-            # Combine all data
+            _LOGGER.debug("Data fetched - Attendance: %s, Calendar: %s", 
+                        bool(attendance_data), bool(calendar_events))
+
             return {
-                # ZenPlanner data
-                "total_sessions": attendance_data["total_sessions"],
-                "monthly_sessions": attendance_data["monthly_sessions"],
-                "last_session": attendance_data["last_session"],
-                "recent_prs": pr_data["recent_prs"],
-                "total_prs": pr_data["total_prs"],
-                "recent_pr_count": pr_data["recent_pr_count"],
-                "all_sessions": attendance_data["all_sessions"],
-                "pr_details": pr_data["pr_details"],
-                
-                # Google Calendar data
-                "calendar_events": calendar_events,
+                "zenplanner_fulcrum_sessions": attendance_data.get("total_sessions", 0),
+                "google_calendar_fulcrum_sessions": len(calendar_events) if calendar_events else 0,
+                "total_fulcrum_sessions": self._reconcile_sessions(attendance_data, calendar_events),
+                "monthly_sessions": attendance_data.get("monthly_sessions", 0),
+                "last_session": attendance_data.get("last_session"),
                 "next_session": next_session,
-                "calendar_total_sessions": len(calendar_events) if calendar_events else 0,
+                "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
+                "total_prs": pr_data.get("total_prs", 0)
             }
 
         except Exception as err:
-            self.logger.error("Error fetching data: %s", err)
+            _LOGGER.error("Error fetching data: %s", err)
             raise
 
     def _reconcile_sessions(self, zenplanner_data: dict, calendar_events: list) -> int:
         """Reconcile session counts between ZenPlanner and Google Calendar."""
         try:
-            # Add debug logging
-            _LOGGER.debug("Reconciling sessions - ZenPlanner data type: %s, Calendar events type: %s",
-                        type(zenplanner_data), type(calendar_events))
-            _LOGGER.debug("ZenPlanner data keys: %s", 
-                        list(zenplanner_data.keys()) if isinstance(zenplanner_data, dict) else "Not a dict")
             # Get all session dates from ZenPlanner
             zen_dates = set()
-            if "all_sessions" in zenplanner_data:
+            if isinstance(zenplanner_data, dict) and "all_sessions" in zenplanner_data:
                 for session in zenplanner_data["all_sessions"]:
                     if isinstance(session, dict) and "date" in session:
                         zen_dates.add(session["date"])
 
             # Get all session dates from Google Calendar
             calendar_dates = set()
-            if calendar_events:
+            if isinstance(calendar_events, list):
                 for event in calendar_events:
                     if isinstance(event, dict) and "date" in event:
                         calendar_dates.add(event["date"])
 
             # Find union of all unique dates
-            all_unique_dates = zen_dates.union(calendar_dates)
-            
-            # Count overlapping dates
-            overlapping_dates = zen_dates.intersection(calendar_dates)
-            
+            unique_dates = zen_dates.union(calendar_dates)
+            overlapping = zen_dates.intersection(calendar_dates)
+
             _LOGGER.debug(
-                "Session reconciliation: ZenPlanner=%d, Calendar=%d, Unique=%d, Overlapping=%d",
-                len(zen_dates), len(calendar_dates), len(all_unique_dates), len(overlapping_dates)
+                "Session reconciliation - ZenPlanner: %d, Calendar: %d, Unique: %d, Overlap: %d",
+                len(zen_dates), len(calendar_dates), len(unique_dates), len(overlapping)
             )
 
-            return len(all_unique_dates)
+            return len(unique_dates)
+
         except Exception as err:
             _LOGGER.error("Error reconciling sessions: %s", str(err))
             return 0
