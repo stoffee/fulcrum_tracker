@@ -153,6 +153,34 @@ async def async_setup_entry(
 
     async_add_entities(entities)
 
+class FirstRunHandler:
+    """Handle first run detection and initialization."""
+    
+    def __init__(self, hass: HomeAssistant) -> None:
+        """Initialize the handler."""
+        self.hass = hass
+        self._storage_key = f"{DOMAIN}.first_run_completed"
+        
+    async def is_first_run(self) -> bool:
+        """Check if this is the first run."""
+        return not await self.hass.helpers.storage.async_storage_get(self._storage_key)
+        
+    async def mark_initialized(self, stats: dict) -> None:
+        """Mark system as initialized with initial stats."""
+        await self.hass.helpers.storage.async_storage_set(
+            self._storage_key,
+            {
+                "initialized_at": datetime.now().isoformat(),
+                "initial_stats": stats,
+                "version": 1
+            }
+        )
+        
+    async def get_initialization_stats(self) -> Optional[dict]:
+        """Get stats from when system was first initialized."""
+        data = await self.hass.helpers.storage.async_storage_get(self._storage_key)
+        return data if data else None
+
 class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching Fulcrum data."""
 
@@ -267,6 +295,39 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.error("Error reconciling sessions: %s", str(err))
             return 0
+
+    async def async_setup_entry(
+        hass: HomeAssistant,
+        config_entry: ConfigEntry,
+        async_add_entities: AddEntitiesCallback,
+    ) -> None:
+        """Set up the Fulcrum Tracker sensors."""
+        first_run_handler = FirstRunHandler(hass)
+        
+        coordinator = FulcrumDataUpdateCoordinator(
+            hass=hass,
+            logger=_LOGGER,
+            name="fulcrum_tracker",
+            first_run_handler=first_run_handler
+        )
+        
+        # Initialize on first run
+        if await first_run_handler.is_first_run():
+            _LOGGER.info("First run detected - performing full data load")
+            await coordinator.async_do_full_load()
+        
+        await coordinator.async_config_entry_first_refresh()
+        
+        entities = [
+            FulcrumSensor(
+                coordinator=coordinator,
+                description=description,
+                config_entry=config_entry,
+            )
+            for description in SENSOR_TYPES
+        ]
+        
+        async_add_entities(entities)
 
     async def _async_stop(self) -> None:
         """Clean up resources when stopping."""

@@ -18,7 +18,7 @@ DEFAULT_PERSON_ID = ""  # Will be provided by user during setup
 DEFAULT_USER_ID = DEFAULT_PERSON_ID 
 DEFAULT_CLIENT_ID = ""  # Will be provided by user during setup
 DEFAULT_MONTHLY_COST = 315.35  # Default monthly cost
-DEFAULT_CACHE_TTL = 3600  # 1 hour in seconds
+DEFAULT_CACHE_TTL = 86400  # 1 hour in seconds
 
 # Calendar Search Terms
 CALENDAR_SEARCH_TERMS = [
@@ -36,7 +36,7 @@ CALENDAR_SEARCH_TERMS = [
 TRAINERS = [
     "Ash",
     "Cate",
-    "Charlotte",  # Normalized from 'charlotte'
+    "Charlotte",
     "Cheryl",
     "Curtis",
     "Dakayla",
