@@ -29,8 +29,7 @@ CALENDAR_SEARCH_TERMS = [
     "exercise",
     "fix back",
     "fucking back exercise",
-    "Do the back muscles",
-    "Tabor Stair Climb"
+    "Do the back muscles"
 ]
 
 # API Constants
