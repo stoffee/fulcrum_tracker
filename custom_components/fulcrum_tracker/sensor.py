@@ -32,27 +32,28 @@ from .const import (
     DEFAULT_USER_ID,
     CONF_CALENDAR_ID,
     CONF_SERVICE_ACCOUNT_PATH,
+    TRAINERS,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 SCAN_INTERVAL = timedelta(minutes=DEFAULT_UPDATE_INTERVAL)
 
-# Trainer list - easy to add new trainers
-TRAINERS = ["Charlotte", "Walter", "Ash", "Sydney", "Shelby", "Dakayla", "Kate"]
+# Trainer session sensors
+TRAINER_SENSORS = [
+    SensorEntityDescription(
+        key=f"trainer_{name.lower()}_sessions",
+        name=f"Sessions with {name}",
+        icon="mdi:account-tie",
+        native_unit_of_measurement="sessions",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+    )
+    for name in TRAINERS
+]
 
 SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
     # Trainer session counts
-    *(
-        SensorEntityDescription(
-            key=f"trainer_{name.lower()}_sessions",
-            name=f"Sessions with {name}",
-            icon="mdi:account-tie",
-            native_unit_of_measurement="sessions",
-            state_class=SensorStateClass.TOTAL_INCREASING,
-        )
-        for name in TRAINERS
-    ),
+    *TRAINER_SENSORS,
     # Source-specific session counts
     SensorEntityDescription(
         key="zenplanner_fulcrum_sessions",
@@ -120,6 +121,8 @@ async def async_setup_entry(
     calendar_id = config_entry.data[CONF_CALENDAR_ID]
     service_account_path = config_entry.data[CONF_SERVICE_ACCOUNT_PATH]
 
+    _LOGGER.debug("Setting up sensors with calendar_id: %s", calendar_id)
+
     auth = ZenPlannerAuth(username, password)
     calendar = ZenPlannerCalendar(auth)
     pr_handler = PRHandler(auth, DEFAULT_USER_ID)
@@ -144,6 +147,9 @@ async def async_setup_entry(
         )
         for description in SENSOR_TYPES
     ]
+
+    _LOGGER.debug("Created %d sensor entities including %d trainer sensors", 
+                len(entities), len(TRAINER_SENSORS))
 
     async_add_entities(entities)
 
@@ -170,18 +176,24 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         self.pr_handler = pr_handler
         self.google_calendar = google_calendar
         self._hass = hass
+        _LOGGER.debug("Coordinator initialized with trainers: %s", TRAINERS)
 
     def _process_trainer_stats(self, calendar_events: list) -> dict:
         """Process trainer statistics from calendar events."""
         trainer_stats = {f"trainer_{name.lower()}_sessions": 0 for name in TRAINERS}
+        _LOGGER.debug("Initial trainer stats keys: %s", list(trainer_stats.keys()))
         
         for event in calendar_events:
             if 'instructor' in event:
                 instructor = event['instructor'].strip().split()[0]  # Get first name
                 key = f"trainer_{instructor.lower()}_sessions"
+                _LOGGER.debug("Processing instructor: %s -> key: %s", instructor, key)
                 if key in trainer_stats:
                     trainer_stats[key] += 1
+                else:
+                    _LOGGER.warning("Unrecognized trainer key: %s", key)
         
+        _LOGGER.debug("Final trainer stats: %s", trainer_stats)
         return trainer_stats
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -201,13 +213,13 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 attendance_task, pr_task, calendar_task, next_session_task,
             )
 
-            _LOGGER.debug("Data fetched - Attendance: %s, Calendar: %s", 
-                        bool(attendance_data), bool(calendar_events))
+            _LOGGER.debug("Data fetched - Calendar events: %d", 
+                       len(calendar_events) if calendar_events else 0)
 
             # Process trainer stats
             trainer_stats = self._process_trainer_stats(calendar_events if calendar_events else [])
 
-            return {
+            data = {
                 **trainer_stats,  # Include trainer session counts
                 "zenplanner_fulcrum_sessions": attendance_data.get("total_sessions", 0),
                 "google_calendar_fulcrum_sessions": len(calendar_events) if calendar_events else 0,
@@ -219,8 +231,12 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 "total_prs": pr_data.get("total_prs", 0)
             }
 
+            _LOGGER.debug("Update complete. Trainer stats: %s", 
+                       {k: v for k, v in data.items() if k.startswith('trainer_')})
+            return data
+
         except Exception as err:
-            _LOGGER.error("Error fetching data: %s", err)
+            _LOGGER.error("Error fetching data: %s", str(err))
             raise
 
     def _reconcile_sessions(self, zenplanner_data: dict, calendar_events: list) -> int:
@@ -288,7 +304,9 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
             next_session = self.coordinator.data["next_session"]
             return f"{next_session['date']} {next_session['time']} with {next_session['instructor']}"
             
-        return self.coordinator.data.get(self.entity_description.key)
+        value = self.coordinator.data.get(self.entity_description.key)
+        _LOGGER.debug("Sensor %s value: %s", self.entity_description.key, value)
+        return value
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

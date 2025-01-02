@@ -24,7 +24,6 @@ class AsyncGoogleCalendarHandler:
     """Async handler for Google Calendar operations."""
 
     def __init__(self, service_account_path: str, calendar_id: str) -> None:
-        """Initialize the calendar handler."""
         self.service_account_path = service_account_path
         self.calendar_id = calendar_id
         self.session: Optional[aiohttp.ClientSession] = None
@@ -36,41 +35,7 @@ class AsyncGoogleCalendarHandler:
         self.local_tz = ZoneInfo("America/Los_Angeles")
         _LOGGER.debug("Calendar handler initialized")
 
-    def is_travel_event(self, event: dict) -> bool:
-        """Check if an event is travel-related."""
-        summary = event.get('summary', '').lower()
-        location = event.get('location', '').lower()
-        description = event.get('description', '').lower()
-
-        flight_markers = [
-            "flight to", "as ", "dl ", "koa", "pdx", "sea", "lax", "sfo", "bos", 
-            "alaska airlines", "delta", "united", "american airlines",
-            "airport", "airways", "airlines"
-        ]
-        for marker in flight_markers:
-            if marker in summary.lower() or marker in location.lower():
-                return True
-
-        stay_markers = [
-            "stay at", "hotel", "resort", "airbnb", "vacation", "hampton inn",
-            "residence inn", "marriott", "hilton", "hyatt"
-        ]
-        for marker in stay_markers:
-            if marker in summary.lower() or marker in location.lower():
-                return True
-
-        travel_locations = [
-            "airport", "airways", "airlines", "terminal", "flight", 
-            "las vegas", "seattle", "boston", "hawaii", "austin", "dallas"
-        ]
-        for loc in travel_locations:
-            if loc in location.lower() or loc in description.lower():
-                return True
-
-        return False
-
     async def _load_credentials(self) -> Dict[str, Any]:
-        """Load service account credentials from file."""
         try:
             async with async_open(self.service_account_path, 'r') as f:
                 return json.loads(await f.read())
@@ -79,7 +44,6 @@ class AsyncGoogleCalendarHandler:
             raise ValueError(ERROR_CALENDAR_AUTH)
 
     async def _get_access_token(self) -> str:
-        """Get a valid access token."""
         now = datetime.utcnow()
         
         if self._token and self._token_expiry and self._token_expiry > now:
@@ -121,46 +85,50 @@ class AsyncGoogleCalendarHandler:
     async def _process_event(self, event: Dict[str, Any], search_term: str) -> Optional[Dict[str, Any]]:
         """Process a single calendar event."""
         try:
+            _LOGGER.debug("Processing event: %s", event.get('summary', 'Unknown Event'))
+            
             start = None
             if 'start' in event:
                 start = event['start'].get('dateTime') or event['start'].get('date')
             
             if not start:
+                _LOGGER.debug("No start time found in event")
                 return None
 
             try:
                 start_dt = self._normalize_timezone(start)
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as e:
+                _LOGGER.debug("Error normalizing timezone: %s", str(e))
                 return None
 
-            # Enhanced instructor extraction with capitalization handling
             instructor = "Unknown"
             if event.get('description'):
                 description = event['description'].lower()
-                # Look for trainer names in description
+                _LOGGER.debug("Processing event description: %s", description[:200])  # First 200 chars for brevity
+                
+                # Try direct trainer name match first
                 for trainer in TRAINERS:
-                    # Check both original and lowercase trainer name
                     if trainer.lower() in description:
                         instructor = trainer
+                        _LOGGER.debug("Found trainer by direct match: %s", trainer)
                         break
-                # If no match, try various instructor formats
+                
+                # If no match, try instructor patterns
                 if instructor == "Unknown":
-                    instructor_patterns = [
-                        'instructor:', 
-                        'instructor', 
-                        'trainer:', 
-                        'trainer'
-                    ]
+                    instructor_patterns = ['instructor:', 'instructor', 'trainer:', 'trainer']
                     for pattern in instructor_patterns:
                         if pattern in description:
-                            found_name = description.split(pattern)[1].split('\n')[0].strip()
-                            # Get first name and capitalize
-                            first_name = found_name.split()[0].capitalize()
+                            found_text = description.split(pattern)[1].split('\n')[0].strip()
+                            first_name = found_text.split()[0].capitalize()
+                            _LOGGER.debug("Found potential instructor name: %s", first_name)
                             if first_name in TRAINERS:
                                 instructor = first_name
+                                _LOGGER.debug("Validated instructor name: %s", instructor)
                                 break
 
-            return {
+            _LOGGER.debug("Final instructor determination: %s", instructor)
+
+            processed_event = {
                 'date': start_dt.strftime('%Y-%m-%d'),
                 'time': start_dt.strftime('%H:%M'),
                 'subject': event.get('summary', 'Unknown Event'),
@@ -170,10 +138,11 @@ class AsyncGoogleCalendarHandler:
                 'location': event.get('location', ''),
                 'event_id': event.get('id', '')
             }
+            _LOGGER.debug("Processed event data: %s", processed_event)
+            return processed_event
 
         except Exception as err:
-            _LOGGER.warning("Error processing event %s: %s", 
-                        event.get('summary', 'Unknown'), str(err))
+            _LOGGER.error("Error processing event %s: %s", event.get('summary', 'Unknown'), str(err))
             return None
 
     def _normalize_timezone(self, event_time: str) -> datetime:
@@ -224,7 +193,8 @@ class AsyncGoogleCalendarHandler:
                     headers=headers
                 ) as response:
                     if response.status != 200:
-                        raise ValueError(f"Calendar API request failed: {await response.text()}")
+                        _LOGGER.error("Calendar API request failed: %s", await response.text())
+                        continue
                     
                     data = await response.json()
                     events = data.get("items", [])
@@ -240,7 +210,9 @@ class AsyncGoogleCalendarHandler:
             self._cache = unique_sessions
             self._cache_time = datetime.now()
             
-            _LOGGER.info("Found %d unique training sessions", len(unique_sessions))
+            _LOGGER.debug("Found %d unique training sessions with instructors: %s", 
+                       len(unique_sessions), 
+                       {s['instructor'] for s in unique_sessions})
             return unique_sessions
 
         except Exception as err:
@@ -262,7 +234,6 @@ class AsyncGoogleCalendarHandler:
         return unique_sessions
 
     async def get_next_session(self) -> Optional[Dict[str, Any]]:
-        """Get the next upcoming training session."""
         if not self.session:
             self.session = aiohttp.ClientSession()
 
@@ -295,7 +266,9 @@ class AsyncGoogleCalendarHandler:
                     events = data.get("items", [])
                     if events:
                         session = await self._process_event(events[0], term)
-                        if session and not self.is_travel_event(events[0]):
+                        if session:
+                            _LOGGER.debug("Next session found: %s with %s", 
+                                      session.get('date'), session.get('instructor'))
                             return session
 
             return None
