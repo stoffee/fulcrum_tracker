@@ -1,11 +1,12 @@
-"""Google Calendar handler for Fulcrum Tracker integration."""
+"""Async Google Calendar handler for Fulcrum Tracker integration."""
 import logging
+import json
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+import aiohttp
+import jwt  # for service account JWT creation
+from aiofiles import open as async_open
 
 from ..const import (
     CALENDAR_SEARCH_TERMS,
@@ -17,36 +18,76 @@ from ..const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-class GoogleCalendarHandler:
-    """Handle Google Calendar operations."""
-
-    SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+class AsyncGoogleCalendarHandler:
+    """Async handler for Google Calendar operations."""
 
     def __init__(self, service_account_path: str, calendar_id: str) -> None:
         """Initialize the calendar handler."""
         self.service_account_path = service_account_path
         self.calendar_id = calendar_id
-        self.service = None
+        self.session: Optional[aiohttp.ClientSession] = None
+        self._credentials = None
         self._cache = {}
         self._cache_time = None
+        self._token = None
+        self._token_expiry = None
         _LOGGER.debug("Calendar handler initialized")
 
-    def authenticate(self) -> bool:
-        """Authenticate with Google Calendar API."""
+    async def _load_credentials(self) -> Dict[str, Any]:
+        """Load service account credentials from file."""
         try:
-            credentials = service_account.Credentials.from_service_account_file(
-                self.service_account_path, scopes=self.SCOPES
-            )
-            
-            self.service = build('calendar', 'v3', credentials=credentials)
-            _LOGGER.debug("Successfully authenticated with Google Calendar")
-            return True
-            
+            async with async_open(self.service_account_path, 'r') as f:
+                return json.loads(await f.read())
         except Exception as err:
-            _LOGGER.error("Failed to authenticate: %s", str(err))
+            _LOGGER.error("Failed to load credentials: %s", str(err))
             raise ValueError(ERROR_CALENDAR_AUTH)
 
-    def _is_cache_valid(self) -> bool:
+    async def _get_access_token(self) -> str:
+        """Get a valid access token."""
+        now = datetime.utcnow()
+        
+        # Check if current token is still valid
+        if self._token and self._token_expiry and self._token_expiry > now:
+            return self._token
+
+        # Load credentials if needed
+        if not self._credentials:
+            self._credentials = await self._load_credentials()
+
+        # Create JWT claim
+        claim = {
+            "iss": self._credentials["client_email"],
+            "scope": "https://www.googleapis.com/auth/calendar.readonly",
+            "aud": "https://oauth2.googleapis.com/token",
+            "exp": now + timedelta(hours=1),
+            "iat": now,
+        }
+
+        # Sign JWT
+        signed_jwt = jwt.encode(
+            claim,
+            self._credentials["private_key"],
+            algorithm="RS256"
+        )
+
+        # Exchange JWT for access token
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                    "assertion": signed_jwt,
+                }
+            ) as response:
+                if response.status != 200:
+                    raise ValueError(f"Token request failed: {await response.text()}")
+                data = await response.json()
+
+        self._token = data["access_token"]
+        self._token_expiry = now + timedelta(seconds=data["expires_in"] - 300)  # 5 min buffer
+        return self._token
+
+    async def _is_cache_valid(self) -> bool:
         """Check if cache is still valid."""
         if not self._cache or not self._cache_time:
             return False
@@ -56,39 +97,51 @@ class GoogleCalendarHandler:
 
     async def get_calendar_events(self) -> List[Dict[str, Any]]:
         """Fetch and process calendar events."""
-        # Check cache first
-        if self._is_cache_valid():
+        if await self._is_cache_valid():
             _LOGGER.debug("Returning cached calendar data")
             return self._cache
 
-        if not self.service:
-            self.authenticate()
+        if not self.session:
+            self.session = aiohttp.ClientSession()
 
         try:
             training_sessions = []
             start_time = datetime.strptime(DEFAULT_START_DATE, "%Y-%m-%d").isoformat() + 'Z'
             end_time = datetime.now().isoformat() + 'Z'
+            
+            # Get fresh access token
+            token = await self._get_access_token()
+            headers = {"Authorization": f"Bearer {token}"}
 
             for term in CALENDAR_SEARCH_TERMS:
                 _LOGGER.debug("Searching for term: %s", term)
                 
-                events_result = self.service.events().list(
-                    calendarId=self.calendar_id,
-                    timeMin=start_time,
-                    timeMax=end_time,
-                    q=term,
-                    singleEvents=True,
-                    orderBy='startTime',
-                    maxResults=2500
-                ).execute()
-                
-                events = events_result.get('items', [])
-                _LOGGER.debug("Found %d events for term '%s'", len(events), term)
-                
-                for event in events:
-                    session = self._process_event(event, term)
-                    if session:
-                        training_sessions.append(session)
+                params = {
+                    "calendarId": self.calendar_id,
+                    "timeMin": start_time,
+                    "timeMax": end_time,
+                    "q": term,
+                    "singleEvents": "true",
+                    "orderBy": "startTime",
+                    "maxResults": "2500"
+                }
+
+                async with self.session.get(
+                    f"https://www.googleapis.com/calendar/v3/calendars/{self.calendar_id}/events",
+                    params=params,
+                    headers=headers
+                ) as response:
+                    if response.status != 200:
+                        raise ValueError(f"Calendar API request failed: {await response.text()}")
+                    
+                    data = await response.json()
+                    events = data.get("items", [])
+                    _LOGGER.debug("Found %d events for term '%s'", len(events), term)
+                    
+                    for event in events:
+                        session = await self._process_event(event, term)
+                        if session:
+                            training_sessions.append(session)
 
             # Remove duplicates while preserving order
             unique_sessions = self._deduplicate_sessions(training_sessions)
@@ -100,11 +153,11 @@ class GoogleCalendarHandler:
             _LOGGER.info("Found %d unique training sessions", len(unique_sessions))
             return unique_sessions
 
-        except HttpError as err:
+        except Exception as err:
             _LOGGER.error("Failed to fetch calendar events: %s", str(err))
             raise ValueError(ERROR_CALENDAR_FETCH)
 
-    def _process_event(self, event: Dict[str, Any], search_term: str) -> Optional[Dict[str, Any]]:
+    async def _process_event(self, event: Dict[str, Any], search_term: str) -> Optional[Dict[str, Any]]:
         """Process a single calendar event."""
         try:
             start = event['start'].get('dateTime', event['start'].get('date'))
@@ -152,30 +205,47 @@ class GoogleCalendarHandler:
 
     async def get_next_session(self) -> Optional[Dict[str, Any]]:
         """Get the next upcoming training session."""
-        if not self.service:
-            self.authenticate()
+        if not self.session:
+            self.session = aiohttp.ClientSession()
 
         try:
             now = datetime.utcnow().isoformat() + 'Z'
             future = (datetime.utcnow() + timedelta(days=30)).isoformat() + 'Z'
+            token = await self._get_access_token()
+            headers = {"Authorization": f"Bearer {token}"}
 
             for term in CALENDAR_SEARCH_TERMS:
-                events_result = self.service.events().list(
-                    calendarId=self.calendar_id,
-                    timeMin=now,
-                    timeMax=future,
-                    q=term,
-                    singleEvents=True,
-                    orderBy='startTime',
-                    maxResults=1
-                ).execute()
-                
-                events = events_result.get('items', [])
-                if events:
-                    return self._process_event(events[0], term)
+                params = {
+                    "calendarId": self.calendar_id,
+                    "timeMin": now,
+                    "timeMax": future,
+                    "q": term,
+                    "singleEvents": "true",
+                    "orderBy": "startTime",
+                    "maxResults": "1"
+                }
+
+                async with self.session.get(
+                    f"https://www.googleapis.com/calendar/v3/calendars/{self.calendar_id}/events",
+                    params=params,
+                    headers=headers
+                ) as response:
+                    if response.status != 200:
+                        continue
+                        
+                    data = await response.json()
+                    events = data.get("items", [])
+                    if events:
+                        return await self._process_event(events[0], term)
 
             return None
 
-        except HttpError as err:
+        except Exception as err:
             _LOGGER.error("Failed to fetch next session: %s", str(err))
             return None
+
+    async def close(self) -> None:
+        """Close the session."""
+        if self.session:
+            await self.session.close()
+            self.session = None

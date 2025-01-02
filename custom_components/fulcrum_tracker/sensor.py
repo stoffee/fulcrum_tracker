@@ -23,7 +23,7 @@ from homeassistant.helpers.update_coordinator import (
 
 from .api.auth import ZenPlannerAuth
 from .api.calendar import ZenPlannerCalendar
-from .api.google_calendar import GoogleCalendarHandler
+from .api.google_calendar import AsyncGoogleCalendarHandler
 from .api.pr import PRHandler
 from .const import (
     DOMAIN,
@@ -69,7 +69,6 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         name="Last Training Session",
         icon="mdi:calendar-clock",
     ),
-    # New calendar-specific sensors
     SensorEntityDescription(
         key="next_session",
         name="Next Training Session",
@@ -101,7 +100,7 @@ async def async_setup_entry(
     pr_handler = PRHandler(auth, DEFAULT_USER_ID)
     
     # Initialize Google Calendar handler
-    google_calendar = GoogleCalendarHandler(service_account_path, calendar_id)
+    google_calendar = AsyncGoogleCalendarHandler(service_account_path, calendar_id)
 
     # Create update coordinator
     coordinator = FulcrumDataUpdateCoordinator(
@@ -138,7 +137,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         name: str,
         calendar: ZenPlannerCalendar,
         pr_handler: PRHandler,
-        google_calendar: GoogleCalendarHandler,
+        google_calendar: AsyncGoogleCalendarHandler,
     ) -> None:
         """Initialize."""
         super().__init__(
@@ -154,19 +153,23 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from Fulcrum and Google Calendar."""
         try:
-            # Get ZenPlanner data
-            attendance_data = await self.hass.async_add_executor_job(
+            # Create tasks for parallel execution
+            attendance_task = self.hass.async_add_executor_job(
                 self.calendar.get_attendance_data
             )
-            
-            # Get PR data
-            pr_data = await self.hass.async_add_executor_job(
+            pr_task = self.hass.async_add_executor_job(
                 self.pr_handler.get_formatted_prs
             )
+            calendar_task = self.google_calendar.get_calendar_events()
+            next_session_task = self.google_calendar.get_next_session()
 
-            # Get Google Calendar data
-            calendar_events = await self.google_calendar.get_calendar_events()
-            next_session = await self.google_calendar.get_next_session()
+            # Wait for all tasks to complete
+            attendance_data, pr_data, calendar_events, next_session = await self.hass.async_gather(
+                attendance_task,
+                pr_task,
+                calendar_task,
+                next_session_task,
+            )
 
             # Combine all data
             return {
@@ -189,6 +192,11 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as err:
             self.logger.error("Error fetching data: %s", err)
             raise
+
+    async def _async_stop(self) -> None:
+        """Clean up resources when stopping."""
+        await self.google_calendar.close()
+        await super()._async_stop()
 
 class FulcrumSensor(CoordinatorEntity, SensorEntity):
     """Representation of a Fulcrum sensor."""
