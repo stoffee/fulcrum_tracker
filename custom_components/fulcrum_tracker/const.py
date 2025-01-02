@@ -32,6 +32,28 @@ CALENDAR_SEARCH_TERMS = [
     "Do the back muscles"
 ]
 
+# trainer names
+TRAINERS = [
+    "Ash",
+    "Cate",
+    "Charlotte",  # Normalized from 'charlotte'
+    "Cheryl",
+    "Curtis",
+    "Dakayla",
+    "Devon",
+    "Ellis",
+    "Emma",
+    "Eric",
+    "Genevieve",
+    "Reggie",
+    "Shane",
+    "Shelby",
+    "Sonia",
+    "Sydney",
+    "Walter",
+    "Zei"
+]
+
 # API Constants
 API_BASE_URL = "https://fulcrum.sites.zenplanner.com"
 API_ENDPOINTS = {

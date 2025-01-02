@@ -38,19 +38,33 @@ _LOGGER = logging.getLogger(__name__)
 
 SCAN_INTERVAL = timedelta(minutes=DEFAULT_UPDATE_INTERVAL)
 
+# Trainer list - easy to add new trainers
+TRAINERS = ["Charlotte", "Walter", "Ash", "Sydney", "Shelby", "Dakayla", "Kate"]
+
 SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
+    # Trainer session counts
+    *(
+        SensorEntityDescription(
+            key=f"trainer_{name.lower()}_sessions",
+            name=f"Sessions with {name}",
+            icon="mdi:account-tie",
+            native_unit_of_measurement="sessions",
+            state_class=SensorStateClass.TOTAL_INCREASING,
+        )
+        for name in TRAINERS
+    ),
     # Source-specific session counts
     SensorEntityDescription(
         key="zenplanner_fulcrum_sessions",
         name="ZenPlanner Fulcrum Sessions",
-        icon="mdi:dumbbell",  # Changed to dumbbell for ZenPlanner
+        icon="mdi:dumbbell",
         native_unit_of_measurement="sessions",
         state_class=SensorStateClass.TOTAL_INCREASING,
     ),
     SensorEntityDescription(
         key="google_calendar_fulcrum_sessions",
         name="Google Calendar Fulcrum Sessions",
-        icon="mdi:calendar-check",  # Kept calendar for Google Calendar
+        icon="mdi:calendar-check",
         native_unit_of_measurement="sessions",
         state_class=SensorStateClass.TOTAL_INCREASING,
     ),
@@ -58,7 +72,7 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
         key="total_fulcrum_sessions",
         name="Total Fulcrum Sessions",
-        icon="mdi:dumbbell-variant",  # Different dumbbell icon for combined total
+        icon="mdi:dumbbell-variant",
         native_unit_of_measurement="sessions",
         state_class=SensorStateClass.TOTAL_INCREASING,
     ),
@@ -106,15 +120,11 @@ async def async_setup_entry(
     calendar_id = config_entry.data[CONF_CALENDAR_ID]
     service_account_path = config_entry.data[CONF_SERVICE_ACCOUNT_PATH]
 
-    # Create data handlers
     auth = ZenPlannerAuth(username, password)
     calendar = ZenPlannerCalendar(auth)
     pr_handler = PRHandler(auth, DEFAULT_USER_ID)
-    
-    # Initialize Google Calendar handler
     google_calendar = AsyncGoogleCalendarHandler(service_account_path, calendar_id)
 
-    # Create update coordinator
     coordinator = FulcrumDataUpdateCoordinator(
         hass=hass,
         logger=_LOGGER,
@@ -124,10 +134,8 @@ async def async_setup_entry(
         google_calendar=google_calendar,
     )
 
-    # Fetch initial data
     await coordinator.async_config_entry_first_refresh()
 
-    # Create entities
     entities = [
         FulcrumSensor(
             coordinator=coordinator,
@@ -163,6 +171,19 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         self.google_calendar = google_calendar
         self._hass = hass
 
+    def _process_trainer_stats(self, calendar_events: list) -> dict:
+        """Process trainer statistics from calendar events."""
+        trainer_stats = {f"trainer_{name.lower()}_sessions": 0 for name in TRAINERS}
+        
+        for event in calendar_events:
+            if 'instructor' in event:
+                instructor = event['instructor'].strip().split()[0]  # Get first name
+                key = f"trainer_{instructor.lower()}_sessions"
+                if key in trainer_stats:
+                    trainer_stats[key] += 1
+        
+        return trainer_stats
+
     async def _async_update_data(self) -> dict[str, Any]:
         try:
             _LOGGER.debug("Starting data update")
@@ -183,7 +204,11 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.debug("Data fetched - Attendance: %s, Calendar: %s", 
                         bool(attendance_data), bool(calendar_events))
 
+            # Process trainer stats
+            trainer_stats = self._process_trainer_stats(calendar_events if calendar_events else [])
+
             return {
+                **trainer_stats,  # Include trainer session counts
                 "zenplanner_fulcrum_sessions": attendance_data.get("total_sessions", 0),
                 "google_calendar_fulcrum_sessions": len(calendar_events) if calendar_events else 0,
                 "total_fulcrum_sessions": self._reconcile_sessions(attendance_data, calendar_events),
@@ -201,21 +226,18 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
     def _reconcile_sessions(self, zenplanner_data: dict, calendar_events: list) -> int:
         """Reconcile session counts between ZenPlanner and Google Calendar."""
         try:
-            # Get all session dates from ZenPlanner
             zen_dates = set()
             if isinstance(zenplanner_data, dict) and "all_sessions" in zenplanner_data:
                 for session in zenplanner_data["all_sessions"]:
                     if isinstance(session, dict) and "date" in session:
                         zen_dates.add(session["date"])
 
-            # Get all session dates from Google Calendar
             calendar_dates = set()
             if isinstance(calendar_events, list):
                 for event in calendar_events:
                     if isinstance(event, dict) and "date" in event:
                         calendar_dates.add(event["date"])
 
-            # Find union of all unique dates
             unique_dates = zen_dates.union(calendar_dates)
             overlapping = zen_dates.intersection(calendar_dates)
 
@@ -275,13 +297,12 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
         data = self.coordinator.data or {}
 
         # Add detailed attributes based on sensor type
-        if self.entity_description.key == "total_sessions":
+        if self.entity_description.key == "total_fulcrum_sessions":
             attrs["sessions_this_month"] = data.get("monthly_sessions", 0)
             attrs["last_session_date"] = data.get("last_session")
-            attrs["calendar_total"] = data.get("calendar_total_sessions", 0)
+            attrs["calendar_total"] = data.get("google_calendar_fulcrum_sessions", 0)
             
             if "calendar_events" in data:
-                # Calculate weekly stats from both sources
                 today = datetime.now().date()
                 week_start = today - timedelta(days=today.weekday())
                 week_sessions = sum(
@@ -299,13 +320,10 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                 "event_id": next_session.get("event_id", ""),
             })
 
-        elif self.entity_description.key == "calendar_total_sessions":
-            if "calendar_events" in data:
-                # Add monthly breakdown
-                monthly_counts = {}
-                for session in data["calendar_events"]:
-                    month = datetime.strptime(session['date'], '%Y-%m-%d').strftime('%Y-%m')
-                    monthly_counts[month] = monthly_counts.get(month, 0) + 1
-                attrs["monthly_breakdown"] = monthly_counts
+        elif self.entity_description.key.startswith("trainer_"):
+            # Add trainer-specific attributes if available
+            trainer_name = self.entity_description.key.split("_")[1]
+            if f"trainer_{trainer_name}_sessions" in data:
+                attrs["total_sessions"] = data[f"trainer_{trainer_name}_sessions"]
 
         return attrs

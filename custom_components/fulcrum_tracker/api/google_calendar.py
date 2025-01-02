@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 import aiohttp
-import jwt  # for service account JWT creation
+import jwt
 from aiofiles import open as async_open
 
 from ..const import (
@@ -15,6 +15,7 @@ from ..const import (
     DEFAULT_CACHE_TTL,
     ERROR_CALENDAR_AUTH,
     ERROR_CALENDAR_FETCH,
+    TRAINERS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -37,12 +38,10 @@ class AsyncGoogleCalendarHandler:
 
     def is_travel_event(self, event: dict) -> bool:
         """Check if an event is travel-related."""
-        # Get event details
         summary = event.get('summary', '').lower()
         location = event.get('location', '').lower()
         description = event.get('description', '').lower()
 
-        # Check for flight markers
         flight_markers = [
             "flight to", "as ", "dl ", "koa", "pdx", "sea", "lax", "sfo", "bos", 
             "alaska airlines", "delta", "united", "american airlines",
@@ -52,7 +51,6 @@ class AsyncGoogleCalendarHandler:
             if marker in summary.lower() or marker in location.lower():
                 return True
 
-        # Check for stay/hotel markers
         stay_markers = [
             "stay at", "hotel", "resort", "airbnb", "vacation", "hampton inn",
             "residence inn", "marriott", "hilton", "hyatt"
@@ -61,7 +59,6 @@ class AsyncGoogleCalendarHandler:
             if marker in summary.lower() or marker in location.lower():
                 return True
 
-        # Check for specific travel locations
         travel_locations = [
             "airport", "airways", "airlines", "terminal", "flight", 
             "las vegas", "seattle", "boston", "hawaii", "austin", "dallas"
@@ -71,75 +68,6 @@ class AsyncGoogleCalendarHandler:
                 return True
 
         return False
-
-    def filter_travel_dates(self, events: list) -> List[Dict[str, Any]]:
-        """Filter events to identify travel dates and training gaps."""
-        travel_periods = []
-        current_period = None
-
-        for event in sorted(events, key=lambda x: x.get('date', '')):  # Changed from x['start']
-            if self.is_travel_event(event):
-                # Get dates safely with fallbacks
-                start_date = event.get('date', '')  # Changed from event['start']
-                end_date = event.get('date', '')    # Default to start date if no end date
-                
-                if not start_date:  # Skip events without dates
-                    continue
-
-                if current_period is None:
-                    current_period = {
-                        'start': start_date,
-                        'end': end_date,
-                        'type': 'travel',
-                        'events': [event]
-                    }
-                elif start_date <= current_period['end']:
-                    # Extend current period if dates overlap
-                    current_period['end'] = max(current_period['end'], end_date)
-                    current_period['events'].append(event)
-                else:
-                    # Start new period
-                    travel_periods.append(current_period)
-                    current_period = {
-                        'start': start_date,
-                        'end': end_date,
-                        'type': 'travel',
-                        'events': [event]
-                    }
-
-        # Add final period if exists
-        if current_period:
-            travel_periods.append(current_period)
-
-        return travel_periods
-
-    def get_non_training_dates(self, events: list) -> List[Dict[str, Any]]:
-        """
-        Get dates when training should be excluded due to travel or other commitments.
-        Returns a list of non-training periods.
-        """
-        exclusion_periods = []
-        
-        # First get travel periods
-        travel_periods = self.filter_travel_dates(events)
-        exclusion_periods.extend(travel_periods)
-        
-        # Add any additional non-training periods (holidays, etc)
-        holidays = [
-            # Add specific dates from your holiday list
-            '2024-01-01',  # New Year's Day
-            '2024-11-28',  # Thanksgiving
-            '2024-12-25',  # Christmas
-        ]
-        
-        for holiday in holidays:
-            exclusion_periods.append({
-                'start': holiday,
-                'end': holiday,
-                'type': 'holiday'
-            })
-        
-        return sorted(exclusion_periods, key=lambda x: x['start'])
 
     async def _load_credentials(self) -> Dict[str, Any]:
         """Load service account credentials from file."""
@@ -154,15 +82,12 @@ class AsyncGoogleCalendarHandler:
         """Get a valid access token."""
         now = datetime.utcnow()
         
-        # Check if current token is still valid
         if self._token and self._token_expiry and self._token_expiry > now:
             return self._token
 
-        # Load credentials if needed
         if not self._credentials:
             self._credentials = await self._load_credentials()
 
-        # Create JWT claim
         claim = {
             "iss": self._credentials["client_email"],
             "scope": "https://www.googleapis.com/auth/calendar.readonly",
@@ -171,14 +96,12 @@ class AsyncGoogleCalendarHandler:
             "iat": now,
         }
 
-        # Sign JWT
         signed_jwt = jwt.encode(
             claim,
             self._credentials["private_key"],
             algorithm="RS256"
         )
 
-        # Exchange JWT for access token
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 "https://oauth2.googleapis.com/token",
@@ -192,24 +115,78 @@ class AsyncGoogleCalendarHandler:
                 data = await response.json()
 
         self._token = data["access_token"]
-        self._token_expiry = now + timedelta(seconds=data["expires_in"] - 300)  # 5 min buffer
+        self._token_expiry = now + timedelta(seconds=data["expires_in"] - 300)
         return self._token
+
+    async def _process_event(self, event: Dict[str, Any], search_term: str) -> Optional[Dict[str, Any]]:
+        """Process a single calendar event."""
+        try:
+            start = None
+            if 'start' in event:
+                start = event['start'].get('dateTime') or event['start'].get('date')
+            
+            if not start:
+                return None
+
+            try:
+                start_dt = self._normalize_timezone(start)
+            except (ValueError, TypeError):
+                return None
+
+            # Enhanced instructor extraction with capitalization handling
+            instructor = "Unknown"
+            if event.get('description'):
+                description = event['description'].lower()
+                # Look for trainer names in description
+                for trainer in TRAINERS:
+                    # Check both original and lowercase trainer name
+                    if trainer.lower() in description:
+                        instructor = trainer
+                        break
+                # If no match, try various instructor formats
+                if instructor == "Unknown":
+                    instructor_patterns = [
+                        'instructor:', 
+                        'instructor', 
+                        'trainer:', 
+                        'trainer'
+                    ]
+                    for pattern in instructor_patterns:
+                        if pattern in description:
+                            found_name = description.split(pattern)[1].split('\n')[0].strip()
+                            # Get first name and capitalize
+                            first_name = found_name.split()[0].capitalize()
+                            if first_name in TRAINERS:
+                                instructor = first_name
+                                break
+
+            return {
+                'date': start_dt.strftime('%Y-%m-%d'),
+                'time': start_dt.strftime('%H:%M'),
+                'subject': event.get('summary', 'Unknown Event'),
+                'instructor': instructor,
+                'search_term': search_term,
+                'description': event.get('description', ''),
+                'location': event.get('location', ''),
+                'event_id': event.get('id', '')
+            }
+
+        except Exception as err:
+            _LOGGER.warning("Error processing event %s: %s", 
+                        event.get('summary', 'Unknown'), str(err))
+            return None
+
+    def _normalize_timezone(self, event_time: str) -> datetime:
+        """Normalize event time to local timezone."""
+        dt = datetime.fromisoformat(event_time.replace('Z', '+00:00'))
+        return dt.astimezone(self.local_tz)
 
     async def _is_cache_valid(self) -> bool:
         """Check if cache is still valid."""
         if not self._cache or not self._cache_time:
             return False
-        
         age = datetime.now() - self._cache_time
         return age.total_seconds() < DEFAULT_CACHE_TTL
-
-    def _normalize_timezone(self, event_time: str) -> datetime:
-        """Normalize event time to local timezone."""
-        # Parse the timestamp
-        dt = datetime.fromisoformat(event_time.replace('Z', '+00:00'))
-        
-        # Convert to local timezone
-        return dt.astimezone(self.local_tz)
 
     async def get_calendar_events(self) -> List[Dict[str, Any]]:
         """Fetch and process calendar events."""
@@ -225,7 +202,6 @@ class AsyncGoogleCalendarHandler:
             start_time = datetime.strptime(DEFAULT_START_DATE, "%Y-%m-%d").isoformat() + 'Z'
             end_time = datetime.now().isoformat() + 'Z'
             
-            # Get fresh access token
             token = await self._get_access_token()
             headers = {"Authorization": f"Bearer {token}"}
 
@@ -259,82 +235,17 @@ class AsyncGoogleCalendarHandler:
                         if session:
                             training_sessions.append(session)
 
-            # Get non-training dates
-            exclusion_periods = self.get_non_training_dates(training_sessions)
-            
-            # Remove duplicates while preserving order
             unique_sessions = self._deduplicate_sessions(training_sessions)
             
-            # Filter out sessions during travel/exclusion periods
-            filtered_sessions = []
-            for session in unique_sessions:
-                session_date = session['date']
-                exclude = False
-                for period in exclusion_periods:
-                    if period['start'] <= session_date <= period['end']:
-                        _LOGGER.debug(
-                            "Excluding session on %s due to %s period", 
-                            session_date, 
-                            period['type']
-                        )
-                        exclude = True
-                        break
-                if not exclude:
-                    filtered_sessions.append(session)
-            
-            # Update cache
-            self._cache = filtered_sessions
+            self._cache = unique_sessions
             self._cache_time = datetime.now()
             
-            _LOGGER.info("Found %d unique training sessions", len(filtered_sessions))
-            return filtered_sessions
+            _LOGGER.info("Found %d unique training sessions", len(unique_sessions))
+            return unique_sessions
 
         except Exception as err:
             _LOGGER.error("Failed to fetch calendar events: %s", str(err))
             raise ValueError(ERROR_CALENDAR_FETCH)
-
-    async def _process_event(self, event: Dict[str, Any], search_term: str) -> Optional[Dict[str, Any]]:
-        """Process a single calendar event with better error handling."""
-        try:
-            # Get start time safely
-            start = None
-            if 'start' in event:
-                start = event['start'].get('dateTime') or event['start'].get('date')
-            
-            if not start:
-                _LOGGER.debug("Skipping event without start time: %s", event.get('summary', 'Unknown'))
-                return None
-
-            # Normalize timezone
-            try:
-                start_dt = self._normalize_timezone(start)
-            except (ValueError, TypeError) as e:
-                _LOGGER.debug("Failed to normalize timezone for event %s: %s", 
-                            event.get('summary', 'Unknown'), str(e))
-                return None
-
-            # Extract instructor if available
-            instructor = "Unknown"
-            if event.get('description'):
-                description = event['description']
-                if 'Instructor:' in description:
-                    instructor = description.split('Instructor:')[1].split('\n')[0].strip()
-
-            return {
-                'date': start_dt.strftime('%Y-%m-%d'),
-                'time': start_dt.strftime('%H:%M'),
-                'subject': event.get('summary', 'Unknown Event'),
-                'instructor': instructor,
-                'search_term': search_term,
-                'description': event.get('description', ''),
-                'location': event.get('location', ''),
-                'event_id': event.get('id', '')
-            }
-
-        except Exception as err:
-            _LOGGER.warning("Error processing event %s: %s", 
-                        event.get('summary', 'Unknown'), str(err))
-            return None
 
     @staticmethod
     def _deduplicate_sessions(sessions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
