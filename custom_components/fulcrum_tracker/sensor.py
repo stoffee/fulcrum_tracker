@@ -209,6 +209,11 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
     def _reconcile_sessions(self, zenplanner_data: dict, calendar_events: list) -> int:
         """Reconcile session counts between ZenPlanner and Google Calendar."""
         try:
+            # Add debug logging
+            _LOGGER.debug("Reconciling sessions - ZenPlanner data type: %s, Calendar events type: %s",
+                        type(zenplanner_data), type(calendar_events))
+            _LOGGER.debug("ZenPlanner data keys: %s", 
+                        list(zenplanner_data.keys()) if isinstance(zenplanner_data, dict) else "Not a dict")
             # Get all session dates from ZenPlanner
             zen_dates = set()
             if "all_sessions" in zenplanner_data:
