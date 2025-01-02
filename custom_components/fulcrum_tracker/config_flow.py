@@ -1,3 +1,4 @@
+"""Configuration flow for Fulcrum Tracker integration."""
 from __future__ import annotations
 
 import logging
@@ -18,6 +19,8 @@ from .const import (
     CONF_CLIENT_ID,
     CONF_MONTHLY_COST,
     DEFAULT_MONTHLY_COST,
+    CONF_CALENDAR_ID,
+    CONF_SERVICE_ACCOUNT_PATH,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -26,41 +29,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Fulcrum Tracker."""
 
     VERSION = 1
-
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle the initial step."""
-        errors = {}
-
-        if user_input is not None:
-            try:
-                # Inline validation of user input
-                if not self._validate_user_input(user_input):
-                    raise InvalidAuth("Invalid user credentials provided.")
-                
-                # Store user input and proceed to JSON upload step
-                self.context["user_input"] = user_input
-                return await self.async_step_upload_json()
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except Exception as e:  # Catch unexpected exceptions
-                _LOGGER.exception("Unexpected exception: %s", e)
-                errors["base"] = "unknown"
-
-        return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_USERNAME): str,
-                    vol.Required(CONF_PASSWORD): str,
-                    vol.Required(CONF_PERSON_ID): str,
-                    vol.Required(CONF_CLIENT_ID): str,
-                    vol.Optional(CONF_MONTHLY_COST, default=DEFAULT_MONTHLY_COST): cv.positive_float,
-                }
-            ),
-            errors=errors,
-        )
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -97,6 +65,34 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_calendar(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle calendar configuration step."""
+        errors = {}
+
+        if user_input is not None:
+            try:
+                # Store calendar ID and proceed to JSON upload
+                self.context["calendar"] = user_input
+                return await self.async_step_upload_json()
+            except Exception as e:
+                _LOGGER.exception("Unexpected exception: %s", e)
+                errors["base"] = "unknown"
+
+        return self.async_show_form(
+            step_id="calendar",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_CALENDAR_ID): str,
+                }
+            ),
+            description_placeholders={
+                "email_note": "Use the email address from your Google Calendar."
+            },
+            errors=errors,
+        )
+
     async def async_step_upload_json(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -113,9 +109,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 with open(json_path, "w") as json_file:
                     json_file.write(json_content)
 
+                # Combine all configuration data
+                config_data = {
+                    **self.context["zenplanner"],
+                    **self.context["calendar"],
+                    "service_account_path": json_path,
+                }
+
                 return self.async_create_entry(
-                    title=f"Fulcrum ({self.context['user_input'][CONF_USERNAME]})",
-                    data={**self.context["user_input"], "service_account_path": json_path},
+                    title=f"Fulcrum ({config_data[CONF_USERNAME]})",
+                    data=config_data,
                 )
             except InvalidJSON:
                 errors["base"] = "invalid_json"
@@ -125,7 +128,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="upload_json",
-            data_schema=vol.Schema({vol.Required("service_account_json"): str}),
+            data_schema=vol.Schema({
+                vol.Required("service_account_json"): str
+            }),
             errors=errors,
         )
 
