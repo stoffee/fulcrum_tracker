@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_time_change
+from homeassistant.util.dt import now as dt_now
 
 from .const import (
     DOMAIN,
@@ -48,7 +49,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if coordinator:
                     try:
                         await coordinator.async_refresh()
-                        entry_data["last_update"] = datetime.now(ZoneInfo(UPDATE_TIMEZONE))
+                        entry_data["last_update"] = dt_now().astimezone(ZoneInfo(UPDATE_TIMEZONE))
                         entry_data["update_failures"] = 0
                         _LOGGER.info("🎉 Scheduled update completed successfully!")
                         
@@ -91,8 +92,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     scheduled_update,
                     hour=UPDATE_TIME_HOUR,
                     minute=UPDATE_TIME_MINUTE,
-                    second=0,
-                    timezone=UPDATE_TIMEZONE
+                    second=0
                 )
             except Exception as err:
                 _LOGGER.error("Error in delayed setup: %s", str(err))

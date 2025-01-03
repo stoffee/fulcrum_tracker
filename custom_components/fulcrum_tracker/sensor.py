@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from homeassistant.components.sensor import (
@@ -229,7 +229,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from APIs."""
         try:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(timezone.utc)  # Make sure datetime and timezone are imported
             
             # Only do full data collection on first run or if we don't have data
             if not self._first_update_done or not self.data:
@@ -290,6 +290,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             recent_events = await self.google_calendar.get_recent_events(update_start)
             
             # Process any new sessions
+            trainer_stats = {}  # Initialize even if no recent events
             if recent_events:
                 trainer_stats = self._process_trainer_stats(recent_events)
                 self._collection_stats["new_sessions_today"] = len(recent_events)
