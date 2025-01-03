@@ -148,9 +148,6 @@ async def async_setup_entry(
         for description in SENSOR_TYPES
     ]
 
-    _LOGGER.debug("Created %d sensor entities including %d trainer sensors", 
-                len(entities), len(TRAINER_SENSORS))
-
     async_add_entities(entities)
 
 class FirstRunHandler:
@@ -200,7 +197,8 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         self.pr_handler = pr_handler
         self.google_calendar = google_calendar
         self._hass = hass
-        _LOGGER.debug("Coordinator initialized with trainers: %s", TRAINERS)
+        self._first_update_done = False
+        _LOGGER.debug("Coordinator initialized")
 
     def _process_trainer_stats(self, calendar_events: list) -> dict:
         """Process trainer statistics from calendar events."""
@@ -221,46 +219,60 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         return trainer_stats
 
     async def _async_update_data(self) -> dict[str, Any]:
+        """Fetch data from APIs."""
         try:
-            _LOGGER.debug("Starting data update")
+            # Only do full data collection on first run or if we don't have data
+            if not self._first_update_done or not self.data:
+                _LOGGER.debug("Starting full data collection")
+                
+                attendance_task = self._hass.async_add_executor_job(
+                    self.calendar.get_attendance_data
+                )
+                pr_task = self._hass.async_add_executor_job(
+                    self.pr_handler.get_formatted_prs
+                )
+                calendar_task = self.google_calendar.get_calendar_events()
+                next_session_task = self.google_calendar.get_next_session()
+                
+                attendance_data, pr_data, calendar_events, next_session = await asyncio.gather(
+                    attendance_task, pr_task, calendar_task, next_session_task,
+                )
+
+                _LOGGER.debug("Data fetched - Calendar events: %d", 
+                           len(calendar_events) if calendar_events else 0)
+
+                # Process trainer stats
+                trainer_stats = self._process_trainer_stats(calendar_events if calendar_events else [])
+
+                self._first_update_done = True
+                
+                return {
+                    **trainer_stats,  # Include trainer session counts
+                    "zenplanner_fulcrum_sessions": attendance_data.get("total_sessions", 0),
+                    "google_calendar_fulcrum_sessions": len(calendar_events) if calendar_events else 0,
+                    "total_fulcrum_sessions": self._reconcile_sessions(attendance_data, calendar_events),
+                    "monthly_sessions": attendance_data.get("monthly_sessions", 0),
+                    "last_session": attendance_data.get("last_session"),
+                    "next_session": next_session,
+                    "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
+                    "total_prs": pr_data.get("total_prs", 0)
+                }
             
-            attendance_task = self._hass.async_add_executor_job(
-                self.calendar.get_attendance_data
-            )
-            pr_task = self._hass.async_add_executor_job(
+            # For subsequent updates, just get latest data
+            _LOGGER.debug("Collecting recent data only")
+            next_session = await self.google_calendar.get_next_session()
+            pr_data = await self._hass.async_add_executor_job(
                 self.pr_handler.get_formatted_prs
             )
-            calendar_task = self.google_calendar.get_calendar_events()
-            next_session_task = self.google_calendar.get_next_session()
             
-            attendance_data, pr_data, calendar_events, next_session = await asyncio.gather(
-                attendance_task, pr_task, calendar_task, next_session_task,
-            )
-
-            _LOGGER.debug("Data fetched - Calendar events: %d", 
-                       len(calendar_events) if calendar_events else 0)
-
-            # Process trainer stats
-            trainer_stats = self._process_trainer_stats(calendar_events if calendar_events else [])
-
-            data = {
-                **trainer_stats,  # Include trainer session counts
-                "zenplanner_fulcrum_sessions": attendance_data.get("total_sessions", 0),
-                "google_calendar_fulcrum_sessions": len(calendar_events) if calendar_events else 0,
-                "total_fulcrum_sessions": self._reconcile_sessions(attendance_data, calendar_events),
-                "monthly_sessions": attendance_data.get("monthly_sessions", 0),
-                "last_session": attendance_data.get("last_session"),
+            return {
+                **self.data,  # Keep existing stats
                 "next_session": next_session,
                 "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
-                "total_prs": pr_data.get("total_prs", 0)
             }
 
-            _LOGGER.debug("Update complete. Trainer stats: %s", 
-                       {k: v for k, v in data.items() if k.startswith('trainer_')})
-            return data
-
         except Exception as err:
-            _LOGGER.error("Error fetching data: %s", str(err))
+            _LOGGER.error("Error updating data: %s", str(err))
             raise
 
     def _reconcile_sessions(self, zenplanner_data: dict, calendar_events: list) -> int:
@@ -291,39 +303,6 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.error("Error reconciling sessions: %s", str(err))
             return 0
-
-    async def async_setup_entry(
-        hass: HomeAssistant,
-        config_entry: ConfigEntry,
-        async_add_entities: AddEntitiesCallback,
-    ) -> None:
-        """Set up the Fulcrum Tracker sensors."""
-        first_run_handler = FirstRunHandler(hass)
-        
-        coordinator = FulcrumDataUpdateCoordinator(
-            hass=hass,
-            logger=_LOGGER,
-            name="fulcrum_tracker",
-            first_run_handler=first_run_handler
-        )
-        
-        # Initialize on first run
-        if await first_run_handler.is_first_run():
-            _LOGGER.info("First run detected - performing full data load")
-            await coordinator.async_do_full_load()
-        
-        await coordinator.async_config_entry_first_refresh()
-        
-        entities = [
-            FulcrumSensor(
-                coordinator=coordinator,
-                description=description,
-                config_entry=config_entry,
-            )
-            for description in SENSOR_TYPES
-        ]
-        
-        async_add_entities(entities)
 
     async def _async_stop(self) -> None:
         """Clean up resources when stopping."""

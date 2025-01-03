@@ -16,29 +16,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Fulcrum Tracker from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     
+    # Store the credentials
     hass.data[DOMAIN][entry.entry_id] = {
         "username": entry.data["username"],
-        "password": entry.data["password"]
+        "password": entry.data["password"],
+        "setup_complete": False  # Track setup state
     }
     
-    async def delayed_setup(delay: int = 120) -> None:
-        """Set up platforms with delay."""
-        try:
-            await asyncio.sleep(delay)
-            await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-        except asyncio.CancelledError:
-            _LOGGER.debug("Delayed setup was cancelled")
-            raise
-        except Exception as err:
-            _LOGGER.error("Error in delayed setup: %s", err)
-            raise
-    
-    hass.async_create_task(delayed_setup(), f"{DOMAIN}_delayed_setup")
+    # Do initial setup after delay
+    async def delayed_setup() -> None:
+        await asyncio.sleep(120)  # 2 minute delay
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        hass.data[DOMAIN][entry.entry_id]["setup_complete"] = True
+        
+    hass.async_create_task(delayed_setup())
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unload_ok:
+    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
     return unload_ok
