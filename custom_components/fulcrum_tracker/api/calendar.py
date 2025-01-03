@@ -155,6 +155,64 @@ class ZenPlannerCalendar:
             _LOGGER.error("Error fetching attendance data: %s", str(err))
             return self._empty_attendance_data()
 
+    async def get_recent_attendance(self, start_date: datetime) -> Dict[str, Any]:
+        """Get recent attendance data."""
+        try:
+            _LOGGER.debug("Starting recent attendance fetch from %s", start_date)
+            
+            # Verify/refresh authentication
+            if not self.auth.is_logged_in():
+                _LOGGER.debug("Session expired, re-authenticating")
+                if not self.auth.login():
+                    raise ValueError("Failed to authenticate")
+            
+            # Get just the last few days of data
+            current_date = datetime.now()
+            start_month = datetime(start_date.year, start_date.month, 1)
+            
+            all_sessions = []
+            current_month = start_month
+            
+            while current_month <= current_date:
+                month_data = self.fetch_month(current_month)
+                # Filter for only recent sessions
+                recent_sessions = [
+                    session for session in month_data 
+                    if datetime.strptime(session['date'], '%Y-%m-%d') >= start_date
+                ]
+                all_sessions.extend(recent_sessions)
+                
+                if current_month.month == current_date.month:
+                    break
+                    
+                # Move to next month
+                if current_month.month == 12:
+                    current_month = datetime(current_month.year + 1, 1, 1)
+                else:
+                    current_month = current_month.replace(month=current_month.month + 1)
+
+            # Calculate stats for recent data
+            total_sessions = len(all_sessions)
+            current_month_str = current_date.strftime('%B %Y')
+            current_month_sessions = sum(
+                1 for s in all_sessions 
+                if s['month_year'] == current_month_str
+            )
+
+            if total_sessions > 0:
+                _LOGGER.info("Found %d recent sessions!", total_sessions)
+
+            return {
+                "total_sessions": total_sessions,
+                "monthly_sessions": current_month_sessions,
+                "last_session": max((s['date'] for s in all_sessions), default=None),
+                "all_sessions": all_sessions
+            }
+
+        except Exception as err:
+            _LOGGER.error("Error fetching recent attendance data: %s", str(err))
+            return self._empty_attendance_data()
+
     @staticmethod
     def _empty_attendance_data() -> Dict[str, Any]:
         """Return empty attendance data structure."""

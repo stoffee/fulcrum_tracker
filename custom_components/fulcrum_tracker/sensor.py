@@ -198,10 +198,18 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         self.google_calendar = google_calendar
         self._hass = hass
         self._first_update_done = False
+        self._last_update_time = None  # New: Track last update
+        self._collection_stats = {      # New: Track collection stats
+            "total_sessions": 0,
+            "new_sessions_today": 0,
+            "last_full_update": None,
+            "update_streak": 0
+        }
         _LOGGER.debug("Coordinator initialized")
 
     def _process_trainer_stats(self, calendar_events: list) -> dict:
         """Process trainer statistics from calendar events."""
+        # Keeping your existing trainer stats processing - it's solid! 
         trainer_stats = {f"trainer_{name.lower()}_sessions": 0 for name in TRAINERS}
         _LOGGER.debug("Initial trainer stats keys: %s", list(trainer_stats.keys()))
         
@@ -221,6 +229,8 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from APIs."""
         try:
+            now = datetime.now(timezone.utc)
+            
             # Only do full data collection on first run or if we don't have data
             if not self._first_update_done or not self.data:
                 _LOGGER.debug("Starting full data collection")
@@ -241,10 +251,18 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.debug("Data fetched - Calendar events: %d", 
                            len(calendar_events) if calendar_events else 0)
 
-                # Process trainer stats
+                # Process trainer stats (keeping your existing logic)
                 trainer_stats = self._process_trainer_stats(calendar_events if calendar_events else [])
 
+                # Initialize collection stats
+                self._collection_stats.update({
+                    "total_sessions": attendance_data.get("total_sessions", 0),
+                    "last_full_update": now.isoformat(),
+                    "update_streak": 1
+                })
+
                 self._first_update_done = True
+                self._last_update_time = now
                 
                 return {
                     **trainer_stats,  # Include trainer session counts
@@ -255,26 +273,48 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                     "last_session": attendance_data.get("last_session"),
                     "next_session": next_session,
                     "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
-                    "total_prs": pr_data.get("total_prs", 0)
+                    "total_prs": pr_data.get("total_prs", 0),
+                    "collection_stats": self._collection_stats
                 }
             
-            # For subsequent updates, just get latest data
-            _LOGGER.debug("Collecting recent data only")
+            # For subsequent updates, get data since last update
+            update_start = now - timedelta(days=2)  # Look back 2 days for safety
+            _LOGGER.info("Starting daily data collection from %s", update_start)
+            
             next_session = await self.google_calendar.get_next_session()
             pr_data = await self._hass.async_add_executor_job(
                 self.pr_handler.get_formatted_prs
             )
             
+            # New: Get recent calendar events
+            recent_events = await self.google_calendar.get_recent_events(update_start)
+            
+            # Process any new sessions
+            if recent_events:
+                trainer_stats = self._process_trainer_stats(recent_events)
+                self._collection_stats["new_sessions_today"] = len(recent_events)
+                self._collection_stats["update_streak"] += 1
+                
+                if len(recent_events) > 0:
+                    _LOGGER.info("🎉 Found %d new sessions! Streak: %d days", 
+                                len(recent_events), 
+                                self._collection_stats["update_streak"])
+            
+            self._last_update_time = now
             return {
                 **self.data,  # Keep existing stats
+                **trainer_stats,  # Update trainer stats if we have new sessions
                 "next_session": next_session,
                 "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
+                "collection_stats": self._collection_stats
             }
 
         except Exception as err:
+            self._collection_stats["update_streak"] = 0
             _LOGGER.error("Error updating data: %s", str(err))
             raise
 
+    # Keeping your existing reconciliation method - it's well done!
     def _reconcile_sessions(self, zenplanner_data: dict, calendar_events: list) -> int:
         """Reconcile session counts between ZenPlanner and Google Calendar."""
         try:
@@ -355,6 +395,12 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
             attrs["sessions_this_month"] = data.get("monthly_sessions", 0)
             attrs["last_session_date"] = data.get("last_session")
             attrs["calendar_total"] = data.get("google_calendar_fulcrum_sessions", 0)
+            
+            # Add collection stats (New!)
+            if "collection_stats" in data:
+                attrs["new_sessions_today"] = data["collection_stats"].get("new_sessions_today", 0)
+                attrs["update_streak"] = data["collection_stats"].get("update_streak", 0)
+                attrs["last_full_update"] = data["collection_stats"].get("last_full_update")
             
             if "calendar_events" in data:
                 today = datetime.now().date()

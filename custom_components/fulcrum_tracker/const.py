@@ -20,6 +20,13 @@ DEFAULT_CLIENT_ID = ""  # Will be provided by user during setup
 DEFAULT_MONTHLY_COST = 315.35  # Default monthly cost
 DEFAULT_CACHE_TTL = 86400  # 1 hour in seconds
 
+# Scheduling Constants
+UPDATE_TIME_HOUR = 19  # 7 PM
+UPDATE_TIME_MINUTE = 0
+UPDATE_TIMEZONE = "America/Los_Angeles"  # PST/PDT
+UPDATE_RETRY_DELAY = 300  # 5 minutes between retry attempts
+UPDATE_MAX_RETRIES = 3
+
 # Calendar Search Terms
 CALENDAR_SEARCH_TERMS = [
     "Small Group Personal Training Hawthorne",
