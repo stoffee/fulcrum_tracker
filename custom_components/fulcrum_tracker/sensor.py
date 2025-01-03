@@ -392,26 +392,8 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, config_entry.entry_id)},
             name="Fulcrum Fitness",
-            manufacturer="
-
-class FulcrumSensor(CoordinatorEntity, SensorEntity):
-    """Representation of a Fulcrum sensor."""
-
-    def __init__(
-        self,
-        coordinator: FulcrumDataUpdateCoordinator,
-        description: SensorEntityDescription,
-        config_entry: ConfigEntry,
-    ) -> None:
-        """Initialize the sensor."""
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._attr_unique_id = f"{config_entry.entry_id}_{description.key}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, config_entry.entry_id)},
-            name="Fulcrum Fitness",
             manufacturer="Fulcrum Fitness PDX",
-            model="Training Tracker",
+            model="Training Tracker"
         )
 
     @property
