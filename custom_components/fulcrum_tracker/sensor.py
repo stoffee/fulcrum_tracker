@@ -22,6 +22,7 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
 )
 
+from .api.the_matrix_calendar import MatrixCalendarHandler
 from .api.auth import ZenPlannerAuth
 from .api.calendar import ZenPlannerCalendar
 from .api.google_calendar import AsyncGoogleCalendarHandler
@@ -142,7 +143,8 @@ async def async_setup_entry(
         google_calendar=google_calendar,
     )
 
-    await coordinator.async_config_entry_first_refresh()
+    #await coordinator.async_config_entry_first_refresh()
+    await coordinator.async_refresh()
 
     entities = [
         FulcrumSensor(
