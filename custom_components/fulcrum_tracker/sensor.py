@@ -108,6 +108,11 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         native_unit_of_measurement="PRs",
         state_class=SensorStateClass.MEASUREMENT,
     ),
+    SensorEntityDescription(
+        key="tomorrow_workout",
+        name="Tomorrow's Workout",
+        icon="mdi:dumbbell",
+    ),
 )
 
 async def async_setup_entry(
@@ -229,7 +234,12 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from APIs."""
         try:
+            matrix_handler = MatrixCalendarHandler(self.google_calendar)
             now = datetime.now(timezone.utc)  # Make sure datetime and timezone are imported
+
+            # Get Matrix workout data
+            tomorrow_workout = await matrix_handler.get_tomorrow_workout()
+            _LOGGER.debug("Tomorrow's workout data: %s", tomorrow_workout)
             
             # Only do full data collection on first run or if we don't have data
             if not self._first_update_done or not self.data:
@@ -274,7 +284,9 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                     "next_session": next_session,
                     "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
                     "total_prs": pr_data.get("total_prs", 0),
-                    "collection_stats": self._collection_stats
+                    "collection_stats": self._collection_stats,
+                    "tomorrow_workout": self._format_workout(tomorrow_workout) if tomorrow_workout else "No workout scheduled",
+                    "tomorrow_workout_details": tomorrow_workout
                 }
             
             # For subsequent updates, get data since last update
@@ -390,6 +402,16 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
         """Return entity specific state attributes."""
         attrs = {}
         data = self.coordinator.data or {}
+
+        if self.entity_description.key == "tomorrow_workout":
+            workout = data.get("tomorrow_workout_details", {})
+            if workout:
+                attrs.update({
+                    "workout_type": workout.get('type'),
+                    "lifts": workout.get('lifts'),
+                    "meps": workout.get('meps'),
+                    "raw_summary": workout.get('raw_summary')
+                })
 
         # Add detailed attributes based on sensor type
         if self.entity_description.key == "total_fulcrum_sessions":

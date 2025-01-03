@@ -20,12 +20,13 @@ from ..const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+"""Async Google Calendar handler for Fulcrum Tracker integration."""
 class AsyncGoogleCalendarHandler:
     """Async handler for Google Calendar operations."""
 
-    def __init__(self, service_account_path: str, calendar_id: str) -> None:
+    def __init__(self, service_account_path: str, default_calendar_id: str) -> None:
         self.service_account_path = service_account_path
-        self.calendar_id = calendar_id
+        self.default_calendar_id = default_calendar_id
         self.session: Optional[aiohttp.ClientSession] = None
         self._credentials = None
         self._cache = {}
@@ -33,7 +34,82 @@ class AsyncGoogleCalendarHandler:
         self._token = None
         self._token_expiry = None
         self.local_tz = ZoneInfo("America/Los_Angeles")
-        _LOGGER.debug("Calendar handler initialized")
+        _LOGGER.debug("Calendar handler initialized with default calendar: %s", default_calendar_id)
+
+    async def get_calendar_events(
+        self, 
+        calendar_id: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> List[Dict[str, Any]]:
+        """Fetch and process calendar events."""
+        if await self._is_cache_valid() and not calendar_id:
+            _LOGGER.debug("Returning cached calendar data")
+            return self._cache
+
+        calendar_id = calendar_id or self.default_calendar_id
+        _LOGGER.debug("Fetching events for calendar: %s", calendar_id)
+
+        start_time = start_date or datetime.strptime(DEFAULT_START_DATE, "%Y-%m-%d")
+        end_time = end_date or datetime.now()
+
+        start_time_str = start_time.isoformat() + 'Z'
+        end_time_str = end_time.isoformat() + 'Z'
+        
+        if not self.session:
+            self.session = aiohttp.ClientSession()
+
+        try:
+            token = await self._get_access_token()
+            headers = {"Authorization": f"Bearer {token}"}
+            training_sessions = []
+
+            for term in CALENDAR_SEARCH_TERMS:
+                _LOGGER.debug("Searching calendar %s for term: %s", calendar_id, term)
+                
+                params = {
+                    "calendarId": calendar_id,
+                    "timeMin": start_time_str,
+                    "timeMax": end_time_str,
+                    "q": term,
+                    "singleEvents": "true",
+                    "orderBy": "startTime",
+                    "maxResults": "2500"
+                }
+
+                async with self.session.get(
+                    f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events",
+                    params=params,
+                    headers=headers
+                ) as response:
+                    if response.status != 200:
+                        _LOGGER.error("Calendar API request failed for %s: %s", 
+                                    calendar_id, await response.text())
+                        continue
+                    
+                    data = await response.json()
+                    events = data.get("items", [])
+                    _LOGGER.debug("Found %d events for term '%s' in calendar %s", 
+                               len(events), term, calendar_id)
+                    
+                    for event in events:
+                        session = await self._process_event(event, term)
+                        if session:
+                            training_sessions.append(session)
+
+            unique_sessions = self._deduplicate_sessions(training_sessions)
+            
+            # Only cache default calendar data
+            if not calendar_id or calendar_id == self.default_calendar_id:
+                self._cache = unique_sessions
+                self._cache_time = datetime.now()
+            
+            return unique_sessions
+
+        except Exception as err:
+            _LOGGER.error("Failed to fetch calendar events for %s: %s", 
+                       calendar_id, str(err), exc_info=True)
+            raise ValueError(ERROR_CALENDAR_FETCH)
 
     async def _load_credentials(self) -> Dict[str, Any]:
         try:
