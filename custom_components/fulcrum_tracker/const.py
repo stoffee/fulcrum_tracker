@@ -61,6 +61,40 @@ TRAINERS = [
     "Zei"
 ]
 
+# Exercise Types
+EXERCISE_TYPES = [
+    "squat",
+    "deadlift", 
+    "bench",
+    "overhead_press",
+    "clean",
+    "snatch",
+    "pullups",
+    "pushups",
+    "row",
+    "kb_swing",
+    "getup",
+    "farmers_carry",
+    "plank"
+]
+
+# Exercise name mappings for fuzzy matching
+EXERCISE_MAPPINGS = {
+    "squat": ["squat", "back squat", "front squat"],
+    "deadlift": ["deadlift", "dead lift", "dl"],
+    "bench": ["bench", "bench press", "bp"],
+    "overhead_press": ["overhead press", "ohp", "press", "shoulder press"],
+    "clean": ["clean", "power clean"],
+    "snatch": ["snatch", "power snatch"],
+    "pullups": ["pull up", "pull-up", "pullup", "chin up"],
+    "pushups": ["push up", "push-up", "pushup"],
+    "row": ["row", "barbell row", "db row"],
+    "kb_swing": ["kettlebell swing", "kb swing", "swing"],
+    "getup": ["turkish", "get up", "get-up", "tgu"],
+    "farmers_carry": ["farmers", "carry", "farmers walk"],
+    "plank": ["plank", "plank hold"]
+}
+
 # API Constants
 API_BASE_URL = "https://fulcrum.sites.zenplanner.com"
 API_ENDPOINTS = {

@@ -34,6 +34,7 @@ from .const import (
     CONF_CALENDAR_ID,
     CONF_SERVICE_ACCOUNT_PATH,
     TRAINERS,
+    EXERCISE_TYPES,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -52,10 +53,20 @@ TRAINER_SENSORS = [
     for name in TRAINERS
 ]
 
+# PR sensors for each exercise type
+PR_SENSORS = [
+    SensorEntityDescription(
+        key=f"pr_{exercise_type}",
+        name=f"{exercise_type.replace('_', ' ').title()} PR",
+        icon="mdi:weight-lifter",
+    )
+    for exercise_type in EXERCISE_TYPES
+]
+
 SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
-    # Trainer session counts
+    # Include all sensor types
     *TRAINER_SENSORS,
-    # Source-specific session counts
+    *PR_SENSORS,
     SensorEntityDescription(
         key="zenplanner_fulcrum_sessions",
         name="ZenPlanner Fulcrum Sessions",
@@ -70,7 +81,6 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         native_unit_of_measurement="sessions",
         state_class=SensorStateClass.TOTAL_INCREASING,
     ),
-    # Combined total
     SensorEntityDescription(
         key="total_fulcrum_sessions",
         name="Total Fulcrum Sessions",
@@ -78,7 +88,6 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         native_unit_of_measurement="sessions",
         state_class=SensorStateClass.TOTAL_INCREASING,
     ),
-    # Time-based metrics
     SensorEntityDescription(
         key="monthly_sessions",
         name="Monthly Training Sessions",
@@ -96,7 +105,6 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         name="Next Training Session",
         icon="mdi:calendar-arrow-right",
     ),
-    # Performance metrics
     SensorEntityDescription(
         key="recent_prs",
         name="Recent PRs",
@@ -121,7 +129,7 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the Fulcrum Tracker sensors."""
+    """Set up Fulcrum Tracker sensors."""
     username = config_entry.data[CONF_USERNAME]
     password = config_entry.data[CONF_PASSWORD]
     calendar_id = config_entry.data[CONF_CALENDAR_ID]
@@ -143,7 +151,6 @@ async def async_setup_entry(
         google_calendar=google_calendar,
     )
 
-    #await coordinator.async_config_entry_first_refresh()
     await coordinator.async_refresh()
 
     entities = [
@@ -205,8 +212,8 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         self.google_calendar = google_calendar
         self._hass = hass
         self._first_update_done = False
-        self._last_update_time = None  # New: Track last update
-        self._collection_stats = {      # New: Track collection stats
+        self._last_update_time = None
+        self._collection_stats = {
             "total_sessions": 0,
             "new_sessions_today": 0,
             "last_full_update": None,
@@ -216,13 +223,12 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
 
     def _process_trainer_stats(self, calendar_events: list) -> dict:
         """Process trainer statistics from calendar events."""
-        # Keeping your existing trainer stats processing - it's solid! 
         trainer_stats = {f"trainer_{name.lower()}_sessions": 0 for name in TRAINERS}
         _LOGGER.debug("Initial trainer stats keys: %s", list(trainer_stats.keys()))
         
         for event in calendar_events:
             if 'instructor' in event:
-                instructor = event['instructor'].strip().split()[0]  # Get first name
+                instructor = event['instructor'].strip().split()[0]
                 key = f"trainer_{instructor.lower()}_sessions"
                 _LOGGER.debug("Processing instructor: %s -> key: %s", instructor, key)
                 if key in trainer_stats:
@@ -237,13 +243,11 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         """Fetch data from APIs."""
         try:
             matrix_handler = MatrixCalendarHandler(self.google_calendar)
-            now = datetime.now(timezone.utc)  # Make sure datetime and timezone are imported
+            now = datetime.now(timezone.utc)
 
-            # Get Matrix workout data
             tomorrow_workout = await matrix_handler.get_tomorrow_workout()
             _LOGGER.debug("Tomorrow's workout data: %s", tomorrow_workout)
             
-            # Only do full data collection on first run or if we don't have data
             if not self._first_update_done or not self.data:
                 _LOGGER.debug("Starting full data collection")
                 
@@ -260,13 +264,8 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                     attendance_task, pr_task, calendar_task, next_session_task,
                 )
 
-                _LOGGER.debug("Data fetched - Calendar events: %d", 
-                           len(calendar_events) if calendar_events else 0)
-
-                # Process trainer stats (keeping your existing logic)
                 trainer_stats = self._process_trainer_stats(calendar_events if calendar_events else [])
 
-                # Initialize collection stats
                 self._collection_stats.update({
                     "total_sessions": attendance_data.get("total_sessions", 0),
                     "last_full_update": now.isoformat(),
@@ -277,7 +276,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 self._last_update_time = now
                 
                 return {
-                    **trainer_stats,  # Include trainer session counts
+                    **trainer_stats,
                     "zenplanner_fulcrum_sessions": attendance_data.get("total_sessions", 0),
                     "google_calendar_fulcrum_sessions": len(calendar_events) if calendar_events else 0,
                     "total_fulcrum_sessions": self._reconcile_sessions(attendance_data, calendar_events),
@@ -286,13 +285,13 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                     "next_session": next_session,
                     "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
                     "total_prs": pr_data.get("total_prs", 0),
+                    "prs_by_type": pr_data.get("prs_by_type", {}),
                     "collection_stats": self._collection_stats,
                     "tomorrow_workout": self._format_workout(tomorrow_workout) if tomorrow_workout else "No workout scheduled",
                     "tomorrow_workout_details": tomorrow_workout
                 }
             
-            # For subsequent updates, get data since last update
-            update_start = now - timedelta(days=2)  # Look back 2 days for safety
+            update_start = now - timedelta(days=2)
             _LOGGER.info("Starting daily data collection from %s", update_start)
             
             next_session = await self.google_calendar.get_next_session()
@@ -300,11 +299,9 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 self.pr_handler.get_formatted_prs
             )
             
-            # New: Get recent calendar events
             recent_events = await self.google_calendar.get_recent_events(update_start)
             
-            # Process any new sessions
-            trainer_stats = {}  # Initialize even if no recent events
+            trainer_stats = {}
             if recent_events:
                 trainer_stats = self._process_trainer_stats(recent_events)
                 self._collection_stats["new_sessions_today"] = len(recent_events)
@@ -317,10 +314,11 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             
             self._last_update_time = now
             return {
-                **self.data,  # Keep existing stats
-                **trainer_stats,  # Update trainer stats if we have new sessions
+                **self.data,
+                **trainer_stats,
                 "next_session": next_session,
                 "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
+                "prs_by_type": pr_data.get("prs_by_type", {}),
                 "collection_stats": self._collection_stats
             }
 
@@ -329,7 +327,6 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.error("Error updating data: %s", str(err))
             raise
 
-    # Keeping your existing reconciliation method - it's well done!
     def _reconcile_sessions(self, zenplanner_data: dict, calendar_events: list) -> int:
         """Reconcile session counts between ZenPlanner and Google Calendar."""
         try:
@@ -359,10 +356,43 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.error("Error reconciling sessions: %s", str(err))
             return 0
 
+    def _format_workout(self, workout: Optional[dict]) -> str:
+        """Format workout details for display."""
+        if not workout:
+            return "No workout scheduled"
+        
+        parts = []
+        if workout.get('type'):
+            parts.append(workout['type'])
+        if workout.get('lifts'):
+            parts.append(f"Lifts: {workout['lifts']}")
+        if workout.get('meps'):
+            parts.append(f"MEPs: {workout['meps']}")
+            
+        return " | ".join(parts) if parts else "Workout details not available"
+
     async def _async_stop(self) -> None:
         """Clean up resources when stopping."""
         await self.google_calendar.close()
         await super()._async_stop()
+
+class FulcrumSensor(CoordinatorEntity, SensorEntity):
+    """Representation of a Fulcrum sensor."""
+
+    def __init__(
+        self,
+        coordinator: FulcrumDataUpdateCoordinator,
+        description: SensorEntityDescription,
+        config_entry: ConfigEntry,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = f"{config_entry.entry_id}_{description.key}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, config_entry.entry_id)},
+            name="Fulcrum Fitness",
+            manufacturer="
 
 class FulcrumSensor(CoordinatorEntity, SensorEntity):
     """Representation of a Fulcrum sensor."""
@@ -390,13 +420,20 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
         if self.coordinator.data is None:
             return None
             
+        # Handle PR sensors
+        if self.entity_description.key.startswith("pr_"):
+            exercise_type = self.entity_description.key[3:]
+            prs = self.coordinator.data.get("prs_by_type", {})
+            if exercise_type in prs and prs[exercise_type]:
+                return prs[exercise_type].get("value")
+            return None
+            
         # Format next session nicely if that's what we're showing
         if self.entity_description.key == "next_session" and self.coordinator.data.get("next_session"):
             next_session = self.coordinator.data["next_session"]
             return f"{next_session['date']} {next_session['time']} with {next_session['instructor']}"
             
         value = self.coordinator.data.get(self.entity_description.key)
-        _LOGGER.debug("Sensor %s value: %s", self.entity_description.key, value)
         return value
 
     @property
@@ -405,6 +442,19 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
         attrs = {}
         data = self.coordinator.data or {}
 
+        # PR-specific attributes
+        if self.entity_description.key.startswith("pr_"):
+            exercise_type = self.entity_description.key[3:]
+            prs = self.coordinator.data.get("prs_by_type", {}).get(exercise_type, {})
+            if prs:
+                attrs.update({
+                    "last_attempt": prs.get("last_result"),
+                    "days_since": prs.get("days_since"),
+                    "attempts": prs.get("attempts"),
+                    "date_achieved": prs.get("date")
+                })
+
+        # Tomorrow's workout attributes
         if self.entity_description.key == "tomorrow_workout":
             workout = data.get("tomorrow_workout_details", {})
             if workout:
@@ -415,13 +465,12 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                     "raw_summary": workout.get('raw_summary')
                 })
 
-        # Add detailed attributes based on sensor type
-        if self.entity_description.key == "total_fulcrum_sessions":
+        # Total sessions attributes
+        elif self.entity_description.key == "total_fulcrum_sessions":
             attrs["sessions_this_month"] = data.get("monthly_sessions", 0)
             attrs["last_session_date"] = data.get("last_session")
             attrs["calendar_total"] = data.get("google_calendar_fulcrum_sessions", 0)
             
-            # Add collection stats (New!)
             if "collection_stats" in data:
                 attrs["new_sessions_today"] = data["collection_stats"].get("new_sessions_today", 0)
                 attrs["update_streak"] = data["collection_stats"].get("update_streak", 0)
@@ -436,6 +485,7 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                 )
                 attrs["sessions_this_week"] = week_sessions
 
+        # Next session attributes
         elif self.entity_description.key == "next_session" and data.get("next_session"):
             next_session = data["next_session"]
             attrs.update({
@@ -445,8 +495,8 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                 "event_id": next_session.get("event_id", ""),
             })
 
+        # Trainer-specific attributes
         elif self.entity_description.key.startswith("trainer_"):
-            # Add trainer-specific attributes if available
             trainer_name = self.entity_description.key.split("_")[1]
             if f"trainer_{trainer_name}_sessions" in data:
                 attrs["total_sessions"] = data[f"trainer_{trainer_name}_sessions"]
