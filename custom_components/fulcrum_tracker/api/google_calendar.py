@@ -27,6 +27,7 @@ class AsyncGoogleCalendarHandler:
     def __init__(self, service_account_path: str, default_calendar_id: str) -> None:
         self.service_account_path = service_account_path
         self.default_calendar_id = default_calendar_id
+        self.calendar_id = default_calendar_id
         self.session: Optional[aiohttp.ClientSession] = None
         self._credentials = None
         self._cache = {}
