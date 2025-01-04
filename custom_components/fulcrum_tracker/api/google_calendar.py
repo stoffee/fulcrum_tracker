@@ -162,8 +162,6 @@ class AsyncGoogleCalendarHandler:
     async def _process_event(self, event: Dict[str, Any], search_term: str) -> Optional[Dict[str, Any]]:
         """Process a single calendar event."""
         try:
-            _LOGGER.debug("Processing event: %s", event.get('summary', 'Unknown Event'))
-            
             start = None
             if 'start' in event:
                 start = event['start'].get('dateTime') or event['start'].get('date')
@@ -181,13 +179,11 @@ class AsyncGoogleCalendarHandler:
             instructor = "Unknown"
             if event.get('description'):
                 description = event['description'].lower()
-                _LOGGER.debug("Processing event description: %s", description[:200])  # First 200 chars for brevity
                 
                 # Try direct trainer name match first
                 for trainer in TRAINERS:
                     if trainer.lower() in description:
                         instructor = trainer
-                        _LOGGER.debug("Found trainer by direct match: %s", trainer)
                         break
                 
                 # If no match, try instructor patterns
@@ -197,10 +193,8 @@ class AsyncGoogleCalendarHandler:
                         if pattern in description:
                             found_text = description.split(pattern)[1].split('\n')[0].strip()
                             first_name = found_text.split()[0].capitalize()
-                            _LOGGER.debug("Found potential instructor name: %s", first_name)
                             if first_name in TRAINERS:
                                 instructor = first_name
-                                _LOGGER.debug("Validated instructor name: %s", instructor)
                                 break
 
             _LOGGER.debug("Final instructor determination: %s", instructor)
@@ -215,7 +209,6 @@ class AsyncGoogleCalendarHandler:
                 'location': event.get('location', ''),
                 'event_id': event.get('id', '')
             }
-            _LOGGER.debug("Processed event data: %s", processed_event)
             return processed_event
 
         except Exception as err:
