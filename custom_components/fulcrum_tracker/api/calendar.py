@@ -1,7 +1,7 @@
 """ZenPlanner calendar data handler."""
 import logging
 from datetime import datetime, timedelta
-import time
+import asyncio
 from typing import Any, Dict, List, Optional
 
 from bs4 import BeautifulSoup
@@ -27,19 +27,21 @@ class ZenPlannerCalendar:
         self.base_url = f"{API_BASE_URL}{API_ENDPOINTS['workouts']}"
         _LOGGER.debug("Calendar handler initialized")
 
-    def fetch_month(self, start_date: datetime) -> List[Dict[str, Any]]:
+    async def fetch_month(self, start_date: datetime) -> List[Dict[str, Any]]:
         """Fetch a specific month's data."""
         _LOGGER.debug(f"Fetching month: {start_date.strftime('%B %Y')}")
         
         url = f"{self.base_url}?&startdate={start_date.strftime('%Y-%m-%d')}"
         current_date = datetime.now()
         
-        response = self.session.get(url)
-        if not response.ok:
-            _LOGGER.error(f"Failed to fetch month: {response.status_code}")
-            return []
+        async with self.session.get(url) as response:
+            if not response.ok:
+                _LOGGER.error(f"Failed to fetch month: {response.status}")
+                return []
+            
+            text = await response.text()
                 
-        soup = BeautifulSoup(response.text, 'html.parser')
+        soup = BeautifulSoup(text, 'html.parser')
         days = soup.find_all('div', class_='dayBlock')
         
         month_data = []
@@ -76,13 +78,16 @@ class ZenPlannerCalendar:
                     
         return month_data
 
-    def _get_next_month_date(self, current_date: datetime) -> datetime:
+    async def _get_next_month_date(self, current_date: datetime) -> datetime:
         """Get next month's date from calendar navigation."""
-        response = self.session.get(
+        async with self.session.get(
             f"{self.base_url}?&startdate={current_date.strftime(DATE_FORMAT)}"
-        )
+        ) as response:
+            if not response.ok:
+                raise ValueError(f"Failed to fetch next month: {response.status}")
+            text = await response.text()
         
-        soup = BeautifulSoup(response.text, 'html.parser')
+        soup = BeautifulSoup(text, 'html.parser')
         next_link = soup.find('a', class_='next')
         
         if next_link and 'href' in next_link.attrs:
@@ -97,15 +102,17 @@ class ZenPlannerCalendar:
             return datetime(current_date.year + 1, 1, 1)
         return current_date.replace(month=current_date.month + 1)
 
-    def get_attendance_data(self) -> Dict[str, Any]:
+    async def get_attendance_data(self) -> Dict[str, Any]:
         """Get formatted attendance data for Home Assistant."""
         try:
             _LOGGER.debug("Starting attendance data fetch")
             
             # Verify/refresh authentication
-            if not self.auth.is_logged_in():
+            is_logged_in = await self.auth.is_logged_in()
+            if not is_logged_in:
                 _LOGGER.debug("Session expired, re-authenticating")
-                if not self.auth.login():
+                login_success = await self.auth.login()
+                if not login_success:
                     raise ValueError("Failed to authenticate")
             
             # Calculate date range (from Nov 2021 to present)
@@ -123,12 +130,12 @@ class ZenPlannerCalendar:
             _LOGGER.debug(f"Fetching data for {current_month.strftime('%B %Y')}")
             
             while current_month <= current_date:
-                month_data = self.fetch_month(current_month)
+                month_data = await self.fetch_month(current_month)
                 all_sessions.extend(month_data)
                 
                 # Move to next month
-                current_month = self._get_next_month_date(current_month)
-                time.sleep(DEFAULT_SLEEP_TIME)
+                current_month = await self._get_next_month_date(current_month)
+                await asyncio.sleep(DEFAULT_SLEEP_TIME)
 
             # Process all sessions
             current_month_str = current_date.strftime('%B %Y')
@@ -161,9 +168,11 @@ class ZenPlannerCalendar:
             _LOGGER.debug("Starting recent attendance fetch from %s", start_date)
             
             # Verify/refresh authentication
-            if not self.auth.is_logged_in():
+            is_logged_in = await self.auth.is_logged_in()
+            if not is_logged_in:
                 _LOGGER.debug("Session expired, re-authenticating")
-                if not self.auth.login():
+                login_success = await self.auth.login()
+                if not login_success:
                     raise ValueError("Failed to authenticate")
             
             # Get just the last few days of data
@@ -174,7 +183,7 @@ class ZenPlannerCalendar:
             current_month = start_month
             
             while current_month <= current_date:
-                month_data = self.fetch_month(current_month)
+                month_data = await self.fetch_month(current_month)
                 # Filter for only recent sessions
                 recent_sessions = [
                     session for session in month_data 

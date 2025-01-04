@@ -37,15 +37,18 @@ class PRHandler:
     async def fetch_prs(self) -> Dict[str, Dict[str, Any]]:
         """Fetch all PR data organized by exercise type."""
         try:
-            if not self.auth.is_logged_in():
-                if not self.auth.login():
+            is_logged_in = await self.auth.is_logged_in()
+            if not is_logged_in:
+                _LOGGER.debug("Not logged in, attempting login")
+                login_success = await self.auth.login()
+                if not login_success:
                     raise ValueError("Failed to authenticate")
 
-            response = self.auth.requests_session.get(self.base_url)
-            if not response.ok:
-                raise ConnectionError(f"Failed to fetch PR page: {response.status_code}")
+            async with self.auth.requests_session.get(self.base_url) as response:
+                if not response.ok:
+                    raise ConnectionError(f"Failed to fetch PR page: {response.status}")
+                content = await response.text()
 
-            content = response.text
             data_match = re.search(
                 r'personResults\.resultSet\s*=\s*\[(.*?)\];', 
                 content, 
@@ -76,6 +79,7 @@ class PRHandler:
                         'attempts': entry_data.get('tries')
                     }
 
+            self._cached_prs = prs_by_type
             return prs_by_type
 
         except Exception as err:
