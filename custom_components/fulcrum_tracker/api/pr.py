@@ -109,10 +109,10 @@ class PRHandler:
         match = re.search(rf'{field}:\s*["\']([^"\']+)["\']', text)
         return match.group(1) if match else None
 
-    def get_formatted_prs(self) -> Dict[str, Any]:
+    async def get_formatted_prs(self) -> Dict[str, Any]:
         """Get formatted PR data for Home Assistant."""
         try:
-            prs = self.fetch_prs()
+            prs = await self.fetch_prs()
             
             if not prs:
                 return self._empty_pr_data()

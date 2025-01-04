@@ -300,9 +300,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 attendance_data = await self._hass.async_add_executor_job(
                     lambda: self.calendar.get_recent_attendance(start_date)
                 )
-                pr_data = await self._hass.async_add_executor_job(
-                    self.pr_handler.get_formatted_prs
-                )
+                pr_data = await self.pr_handler.get_formatted_prs()  # This line changed
                 calendar_events = await self.google_calendar.get_calendar_events()
                 next_session = await self.google_calendar.get_next_session()
 
@@ -339,9 +337,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 # Get recent data (2 days)
                 update_start = now - timedelta(days=2)
                 next_session = await self.google_calendar.get_next_session()
-                pr_data = await self._hass.async_add_executor_job(
-                    self.pr_handler.get_formatted_prs
-                )
+                pr_data = await self.pr_handler.get_formatted_prs()  # This line changed
                 
                 # Get recent calendar events
                 recent_events = await self.google_calendar.get_calendar_events(
