@@ -297,18 +297,14 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 
                 # Get just last 30 days
                 start_date = now - timedelta(days=30)
-                attendance_task = self._hass.async_add_executor_job(
+                attendance_data = await self._hass.async_add_executor_job(
                     lambda: self.calendar.get_recent_attendance(start_date)
                 )
-                pr_task = self._hass.async_add_executor_job(
+                pr_data = await self._hass.async_add_executor_job(
                     self.pr_handler.get_formatted_prs
                 )
-                calendar_task = self.google_calendar.get_calendar_events()
-                next_session_task = self.google_calendar.get_next_session()
-                
-                attendance_data, pr_data, calendar_events, next_session = await asyncio.gather(
-                    attendance_task, pr_task, calendar_task, next_session_task,
-                )
+                calendar_events = await self.google_calendar.get_calendar_events()
+                next_session = await self.google_calendar.get_next_session()
 
                 initial_data = {
                     "zenplanner_fulcrum_sessions": attendance_data.get("total_sessions", 0),
@@ -340,13 +336,18 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.debug("🔄 PHASE 3: Incremental update...")
                 self._collection_stats["current_phase"] = "incremental"
                 
-                # Just get recent stuff (2 days)
+                # Get recent data (2 days)
                 update_start = now - timedelta(days=2)
                 next_session = await self.google_calendar.get_next_session()
                 pr_data = await self._hass.async_add_executor_job(
                     self.pr_handler.get_formatted_prs
                 )
-                recent_events = await self.google_calendar.get_recent_events(update_start)
+                
+                # Get recent calendar events
+                recent_events = await self.google_calendar.get_calendar_events(
+                    start_date=update_start,
+                    end_date=now
+                )
                 
                 if recent_events:
                     self._collection_stats["new_sessions_today"] = len(recent_events)
@@ -421,6 +422,110 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         await self.google_calendar.close()
         await super()._async_stop()
 
+class SensorDefaults:
+    """Handle default values for all sensor types."""
+
+    @staticmethod
+    def get_loading_state(sensor_key: str) -> Dict[str, Any]:
+        """Get appropriate loading state for a sensor type."""
+        
+        # PR-specific defaults
+        if sensor_key.startswith("pr_"):
+            return {
+                "state": "Loading PR data...",
+                "attributes": {
+                    "last_attempt": "Not yet loaded",
+                    "days_since": "?",
+                    "attempts": 0,
+                    "date_achieved": None,
+                    "loading_status": "initializing"
+                }
+            }
+        
+        # Trainer session counters
+        if sensor_key.startswith("trainer_"):
+            trainer_name = sensor_key.split("_")[1].title()
+            return {
+                "state": 0,
+                "attributes": {
+                    "total_sessions": 0,
+                    "trainer_name": trainer_name,
+                    "loading_status": "initializing"
+                }
+            }
+        
+        # Special case sensors
+        SPECIAL_DEFAULTS = {
+            "zenplanner_fulcrum_sessions": {
+                "state": 0,
+                "attributes": {"source": "ZenPlanner", "loading_status": "initializing"}
+            },
+            "google_calendar_fulcrum_sessions": {
+                "state": 0,
+                "attributes": {"source": "Google Calendar", "loading_status": "initializing"}
+            },
+            "total_fulcrum_sessions": {
+                "state": 0,
+                "attributes": {
+                    "sessions_this_month": 0,
+                    "last_session_date": "Loading...",
+                    "calendar_total": 0,
+                    "new_sessions_today": 0,
+                    "update_streak": 0,
+                    "current_phase": "initializing",
+                    "loading_status": "initializing"
+                }
+            },
+            "monthly_sessions": {
+                "state": 0,
+                "attributes": {"loading_status": "initializing"}
+            },
+            "last_session": {
+                "state": "Loading last session data...",
+                "attributes": {"loading_status": "initializing"}
+            },
+            "next_session": {
+                "state": "Loading next session data...",
+                "attributes": {
+                    "instructor": "Loading...",
+                    "location": "Loading...",
+                    "description": "Initializing session data...",
+                    "loading_status": "initializing"
+                }
+            },
+            "recent_prs": {
+                "state": "Loading PR history...",
+                "attributes": {"loading_status": "initializing"}
+            },
+            "total_prs": {
+                "state": 0,
+                "attributes": {"loading_status": "initializing"}
+            },
+            "tomorrow_workout": {
+                "state": "Loading workout data...",
+                "attributes": {
+                    "workout_type": "Loading...",
+                    "lifts": "Loading...",
+                    "meps": "Loading...",
+                    "loading_status": "initializing"
+                }
+            }
+        }
+        
+        # Return special case or generic default
+        return SPECIAL_DEFAULTS.get(sensor_key, {
+            "state": "Initializing...",
+            "attributes": {"loading_status": "initializing"}
+        })
+
+    @staticmethod
+    def is_loading_state(state_dict: Dict[str, Any]) -> bool:
+        """Check if a state dictionary represents a loading state."""
+        return (
+            isinstance(state_dict, dict) and 
+            state_dict.get("attributes", {}).get("loading_status") == "initializing"
+        )
+
 class FulcrumSensor(CoordinatorEntity, SensorEntity):
     """Representation of a Fulcrum sensor."""
 
@@ -445,7 +550,13 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
     def native_value(self) -> StateType:
         """Return the state of the sensor."""
         if self.coordinator.data is None:
-            return None
+            default_state = SensorDefaults.get_loading_state(self.entity_description.key)
+            _LOGGER.debug(
+                "🏗️ Using default state for %s: %s", 
+                self.entity_description.key,
+                default_state["state"]
+            )
+            return default_state["state"]
             
         # Handle PR sensors
         if self.entity_description.key.startswith("pr_"):
@@ -453,7 +564,7 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
             prs = self.coordinator.data.get("prs_by_type", {})
             if exercise_type in prs and prs[exercise_type]:
                 return prs[exercise_type].get("value")
-            return None
+            return SensorDefaults.get_loading_state(self.entity_description.key)["state"]
             
         # Format next session nicely if that's what we're showing
         if self.entity_description.key == "next_session" and self.coordinator.data.get("next_session"):
@@ -461,12 +572,22 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
             return f"{next_session['date']} {next_session['time']} with {next_session['instructor']}"
             
         value = self.coordinator.data.get(self.entity_description.key)
+        if value is None:
+            return SensorDefaults.get_loading_state(self.entity_description.key)["state"]
         return value
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return entity specific state attributes."""
-        attrs = {}
+        # Start with default attributes
+        default_state = SensorDefaults.get_loading_state(self.entity_description.key)
+        attrs = default_state["attributes"].copy()
+        data = self.coordinator.data or {}
+
+        # If we don't have coordinator data yet, return defaults
+        if self.coordinator.data is None:
+            return attrs
+            
         data = self.coordinator.data or {}
 
         # PR-specific attributes
@@ -489,23 +610,29 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                     "workout_type": workout.get('type'),
                     "lifts": workout.get('lifts'),
                     "meps": workout.get('meps'),
-                    "raw_summary": workout.get('raw_summary')
+                    "raw_summary": workout.get('raw_summary'),
+                    "loading_status": "complete"
                 })
 
         # Total sessions attributes
         elif self.entity_description.key == "total_fulcrum_sessions":
-            attrs["sessions_this_month"] = data.get("monthly_sessions", 0)
-            attrs["last_session_date"] = data.get("last_session")
-            attrs["calendar_total"] = data.get("google_calendar_fulcrum_sessions", 0)
+            attrs.update({
+                "sessions_this_month": data.get("monthly_sessions", 0),
+                "last_session_date": data.get("last_session"),
+                "calendar_total": data.get("google_calendar_fulcrum_sessions", 0),
+                "loading_status": "complete"
+            })
             
             if "collection_stats" in data:
-                attrs["new_sessions_today"] = data["collection_stats"].get("new_sessions_today", 0)
-                attrs["update_streak"] = data["collection_stats"].get("update_streak", 0)
-                attrs["last_full_update"] = data["collection_stats"].get("last_full_update")
-                attrs["current_phase"] = data["collection_stats"].get("current_phase", "unknown")
-                attrs["phase_description"] = self._get_phase_description(
-                    data["collection_stats"].get("current_phase", "unknown")
-                )
+                attrs.update({
+                    "new_sessions_today": data["collection_stats"].get("new_sessions_today", 0),
+                    "update_streak": data["collection_stats"].get("update_streak", 0),
+                    "last_full_update": data["collection_stats"].get("last_full_update"),
+                    "current_phase": data["collection_stats"].get("current_phase", "unknown"),
+                    "phase_description": self._get_phase_description(
+                        data["collection_stats"].get("current_phase", "unknown")
+                    )
+                })
             
             if "calendar_events" in data:
                 today = datetime.now().date()
@@ -524,13 +651,17 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                 "location": next_session.get("location", ""),
                 "description": next_session.get("description", ""),
                 "event_id": next_session.get("event_id", ""),
+                "loading_status": "complete"
             })
 
         # Trainer-specific attributes
         elif self.entity_description.key.startswith("trainer_"):
             trainer_name = self.entity_description.key.split("_")[1]
             if f"trainer_{trainer_name}_sessions" in data:
-                attrs["total_sessions"] = data[f"trainer_{trainer_name}_sessions"]
+                attrs.update({
+                    "total_sessions": data[f"trainer_{trainer_name}_sessions"],
+                    "loading_status": "complete"
+                })
 
         return attrs
 
