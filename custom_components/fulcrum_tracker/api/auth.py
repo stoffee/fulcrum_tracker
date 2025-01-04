@@ -2,7 +2,7 @@
 import logging
 from typing import Optional
 
-import requests
+import aiohttp
 from bs4 import BeautifulSoup
 
 from ..const import (
@@ -20,7 +20,7 @@ class ZenPlannerAuth:
     def __init__(self, email: str, password: str) -> None:
         """Initialize auth handler."""
         self.base_url = API_BASE_URL
-        self.session = requests.Session()
+        self.session = aiohttp.ClientSession()
         self.email = email
         self.password = password
         
@@ -33,7 +33,7 @@ class ZenPlannerAuth:
             'Referer': f"{self.base_url}{API_ENDPOINTS['login']}"
         })
 
-    def login(self) -> bool:
+    async def login(self) -> bool:
         """Attempt to log into ZenPlanner."""
         try:
             _LOGGER.debug("Starting login sequence")
@@ -46,13 +46,14 @@ class ZenPlannerAuth:
                 "message": "multiProfile"
             }
             
-            response = self.session.get(login_url, params=params)
-            if not response.ok:
-                _LOGGER.error("Failed to get login page: %s", response.status_code)
-                raise ConnectionError(ERROR_CONNECTION)
+            async with self.session.get(login_url, params=params) as response:
+                if not response.ok:
+                    _LOGGER.error("Failed to get login page: %s", response.status)
+                    raise ConnectionError(ERROR_CONNECTION)
+                content = await response.text()
             
             # 2. Parse token
-            soup = BeautifulSoup(response.text, 'html.parser')
+            soup = BeautifulSoup(content, 'html.parser')
             token_input = soup.find('input', {'name': '__xsToken'})
             token = token_input.get('value', '') if token_input else ''
             
@@ -72,16 +73,10 @@ class ZenPlannerAuth:
             })
             
             login_url_full = f"{login_url}?VIEW=login&LOGOUT=false&message=multiProfile"
-            login_response = self.session.post(
-                login_url_full,
-                data=login_data,
-                allow_redirects=True
-            )
-            
-            # Check login success
-            if 'person.cfm' in login_response.url:
-                _LOGGER.debug("Login successful")
-                return True
+            async with self.session.post(login_url_full, data=login_data) as login_response:
+                if 'person.cfm' in str(login_response.url):
+                    _LOGGER.debug("Login successful")
+                    return True
                 
             _LOGGER.error("Login failed - wrong redirect")
             raise ValueError(ERROR_AUTH)
@@ -90,11 +85,11 @@ class ZenPlannerAuth:
             _LOGGER.error("Login error: %s", str(err))
             return False
 
-    def is_logged_in(self) -> bool:
+    async def is_logged_in(self) -> bool:
         """Check if session is still valid."""
         try:
-            response = self.session.get(f"{self.base_url}/person.cfm")
-            return response.ok and 'login.cfm' not in response.url
+            async with self.session.get(f"{self.base_url}/person.cfm") as response:
+                return response.ok and 'login.cfm' not in str(response.url)
         except Exception as err:
             _LOGGER.error("Session check error: %s", str(err))
             return False
