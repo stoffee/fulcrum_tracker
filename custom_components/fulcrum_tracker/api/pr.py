@@ -44,10 +44,21 @@ class PRHandler:
                 if not login_success:
                     raise ValueError("Failed to authenticate")
 
-            async with self.auth.requests_session.get(self.base_url) as response:
-                if not response.ok:
-                    raise ConnectionError(f"Failed to fetch PR page: {response.status}")
-                content = await response.text()
+            session = await self.auth.requests_session
+            try:
+                async with session.get(self.base_url) as response:
+                    if not response.ok:
+                        raise ConnectionError(f"Failed to fetch PR page: {response.status}")
+                    content = await response.text()
+            except Exception as session_err:
+                _LOGGER.error("Session error: %s", str(session_err))
+                # Try to recover by forcing a new session
+                await self.auth.close()
+                session = await self.auth.requests_session
+                async with session.get(self.base_url) as response:
+                    if not response.ok:
+                        raise ConnectionError(f"Failed to fetch PR page after retry: {response.status}")
+                    content = await response.text()
 
             data_match = re.search(
                 r'personResults\.resultSet\s*=\s*\[(.*?)\];', 

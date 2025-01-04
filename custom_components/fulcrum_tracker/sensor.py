@@ -41,7 +41,7 @@ _LOGGER = logging.getLogger(__name__)
 
 SCAN_INTERVAL = timedelta(minutes=DEFAULT_UPDATE_INTERVAL)
 
-# Trainer session sensors
+# Sensor Type Definitions
 TRAINER_SENSORS = [
     SensorEntityDescription(
         key=f"trainer_{name.lower()}_sessions",
@@ -53,7 +53,6 @@ TRAINER_SENSORS = [
     for name in TRAINERS
 ]
 
-# PR sensors for each exercise type
 PR_SENSORS = [
     SensorEntityDescription(
         key=f"pr_{exercise_type}",
@@ -64,7 +63,6 @@ PR_SENSORS = [
 ]
 
 SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
-    # Include all sensor types
     *TRAINER_SENSORS,
     *PR_SENSORS,
     SensorEntityDescription(
@@ -137,10 +135,12 @@ async def async_setup_entry(
 
     _LOGGER.debug("Setting up sensors with calendar_id: %s", calendar_id)
 
+    # Initialize API handlers
     auth = ZenPlannerAuth(username, password)
     calendar = ZenPlannerCalendar(auth)
     pr_handler = PRHandler(auth, DEFAULT_USER_ID)
     google_calendar = AsyncGoogleCalendarHandler(service_account_path, calendar_id)
+    matrix_handler = MatrixCalendarHandler(google_calendar)
 
     coordinator = FulcrumDataUpdateCoordinator(
         hass=hass,
@@ -149,6 +149,7 @@ async def async_setup_entry(
         calendar=calendar,
         pr_handler=pr_handler,
         google_calendar=google_calendar,
+        matrix_handler=matrix_handler,
     )
 
     await coordinator.async_refresh()
@@ -164,30 +165,6 @@ async def async_setup_entry(
 
     async_add_entities(entities)
 
-class FirstRunHandler:
-    """Handle first run detection and initialization."""
-    
-    def __init__(self, hass: HomeAssistant) -> None:
-        """Initialize the handler."""
-        self.hass = hass
-        self.store = hass.helpers.storage.Store(version=1, key=f"{DOMAIN}_initialization")
-        
-    async def is_first_run(self) -> bool:
-        """Check if this is the first run."""
-        data = await self.store.async_load()
-        return data is None
-        
-    async def mark_initialized(self, stats: dict) -> None:
-        """Mark system as initialized with initial stats."""
-        await self.store.async_save({
-            "initialized_at": datetime.now().isoformat(),
-            "initial_stats": stats,
-        })
-        
-    async def get_initialization_stats(self) -> Optional[dict]:
-        """Get stats from when system was first initialized."""
-        return await self.store.async_load()
-
 class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching Fulcrum data."""
 
@@ -199,6 +176,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         calendar: ZenPlannerCalendar,
         pr_handler: PRHandler,
         google_calendar: AsyncGoogleCalendarHandler,
+        matrix_handler: MatrixCalendarHandler,
     ) -> None:
         """Initialize."""
         super().__init__(
@@ -210,7 +188,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         self.calendar = calendar
         self.pr_handler = pr_handler
         self.google_calendar = google_calendar
-        self._hass = hass
+        self.matrix_handler = matrix_handler
         self._first_update_done = False
         self._historical_load_done = False
         self._historical_load_in_progress = False
@@ -233,7 +211,6 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             if 'instructor' in event:
                 instructor = event['instructor'].strip().split()[0]
                 key = f"trainer_{instructor.lower()}_sessions"
-                _LOGGER.debug("Processing instructor: %s -> key: %s", instructor, key)
                 if key in trainer_stats:
                     trainer_stats[key] += 1
                 else:
@@ -253,9 +230,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             self._collection_stats["current_phase"] = "historical_load"
 
             # Get full historical data
-            attendance_data = await self._hass.async_add_executor_job(
-                self.calendar.get_attendance_data
-            )
+            attendance_data = await self.calendar.get_attendance_data()
             calendar_events = await self.google_calendar.get_calendar_events()
 
             # Update our stats with the full data
@@ -284,11 +259,10 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from APIs."""
         try:
-            matrix_handler = MatrixCalendarHandler(self.google_calendar)
             now = datetime.now(timezone.utc)
 
             # Always get tomorrow's workout
-            tomorrow_workout = await matrix_handler.get_tomorrow_workout()
+            tomorrow_workout = await self.matrix_handler.get_tomorrow_workout()
             
             # PHASE 1: Quick Initial Load (30 days)
             if not self._first_update_done or not self.data:
@@ -297,10 +271,8 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 
                 # Get just last 30 days
                 start_date = now - timedelta(days=30)
-                attendance_data = await self._hass.async_add_executor_job(
-                    lambda: self.calendar.get_recent_attendance(start_date)
-                )
-                pr_data = await self.pr_handler.get_formatted_prs()  # This line changed
+                attendance_data = await self.calendar.get_recent_attendance(start_date)
+                pr_data = await self.pr_handler.get_formatted_prs()
                 calendar_events = await self.google_calendar.get_calendar_events()
                 next_session = await self.google_calendar.get_next_session()
 
@@ -325,7 +297,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 # PHASE 2: Start Historical Load
                 if not self._historical_load_done and not self._historical_load_in_progress:
                     _LOGGER.info("🕰️ PHASE 2: Starting background historical load...")
-                    self._hass.async_create_task(self._load_historical_data())
+                    asyncio.create_task(self._load_historical_data())
 
                 return initial_data
 
@@ -337,7 +309,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 # Get recent data (2 days)
                 update_start = now - timedelta(days=2)
                 next_session = await self.google_calendar.get_next_session()
-                pr_data = await self.pr_handler.get_formatted_prs()  # This line changed
+                pr_data = await self.pr_handler.get_formatted_prs()
                 
                 # Get recent calendar events
                 recent_events = await self.google_calendar.get_calendar_events(
@@ -417,6 +389,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         """Clean up resources when stopping."""
         await self.google_calendar.close()
         await super()._async_stop()
+
 
 class SensorDefaults:
     """Handle default values for all sensor types."""
@@ -522,6 +495,7 @@ class SensorDefaults:
             state_dict.get("attributes", {}).get("loading_status") == "initializing"
         )
 
+
 class FulcrumSensor(CoordinatorEntity, SensorEntity):
     """Representation of a Fulcrum sensor."""
 
@@ -595,11 +569,12 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                     "last_attempt": prs.get("last_result"),
                     "days_since": prs.get("days_since"),
                     "attempts": prs.get("attempts"),
-                    "date_achieved": prs.get("date")
+                    "date_achieved": prs.get("date"),
+                    "loading_status": "complete"
                 })
 
         # Tomorrow's workout attributes
-        if self.entity_description.key == "tomorrow_workout":
+        elif self.entity_description.key == "tomorrow_workout":
             workout = data.get("tomorrow_workout_details", {})
             if workout:
                 attrs.update({
@@ -660,7 +635,6 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                 })
 
         return attrs
-
 
     def _get_phase_description(self, phase: str) -> str:
         """Get a user-friendly description of the current phase."""
