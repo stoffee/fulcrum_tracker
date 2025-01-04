@@ -212,14 +212,17 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         self.google_calendar = google_calendar
         self._hass = hass
         self._first_update_done = False
+        self._historical_load_done = False
+        self._historical_load_in_progress = False
         self._last_update_time = None
         self._collection_stats = {
             "total_sessions": 0,
             "new_sessions_today": 0,
             "last_full_update": None,
-            "update_streak": 0
+            "update_streak": 0,
+            "current_phase": "init"
         }
-        _LOGGER.debug("Coordinator initialized")
+        _LOGGER.debug("🎮 Coordinator initialized and ready to rock!")
 
     def _process_trainer_stats(self, calendar_events: list) -> dict:
         """Process trainer statistics from calendar events."""
@@ -239,20 +242,63 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Final trainer stats: %s", trainer_stats)
         return trainer_stats
 
+    async def _load_historical_data(self) -> None:
+        """Background task to load all historical data."""
+        try:
+            if self._historical_load_done or self._historical_load_in_progress:
+                return
+
+            _LOGGER.info("🕰️ Starting background historical data load...")
+            self._historical_load_in_progress = True
+            self._collection_stats["current_phase"] = "historical_load"
+
+            # Get full historical data
+            attendance_data = await self._hass.async_add_executor_job(
+                self.calendar.get_attendance_data
+            )
+            calendar_events = await self.google_calendar.get_calendar_events()
+
+            # Update our stats with the full data
+            if attendance_data and calendar_events:
+                self.data = {
+                    **self.data,
+                    "zenplanner_fulcrum_sessions": attendance_data.get("total_sessions", 0),
+                    "google_calendar_fulcrum_sessions": len(calendar_events),
+                    "total_fulcrum_sessions": self._reconcile_sessions(attendance_data, calendar_events),
+                }
+                
+                trainer_stats = self._process_trainer_stats(calendar_events)
+                self.data.update(trainer_stats)
+
+            self._historical_load_done = True
+            self._collection_stats["current_phase"] = "incremental"
+            _LOGGER.info("📚 Historical data load complete! Total sessions: %d", 
+                        self.data.get("total_fulcrum_sessions", 0))
+
+        except Exception as err:
+            _LOGGER.error("💥 Historical data load failed: %s", str(err))
+            self._collection_stats["current_phase"] = "historical_load_failed"
+        finally:
+            self._historical_load_in_progress = False
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from APIs."""
         try:
             matrix_handler = MatrixCalendarHandler(self.google_calendar)
             now = datetime.now(timezone.utc)
 
+            # Always get tomorrow's workout
             tomorrow_workout = await matrix_handler.get_tomorrow_workout()
-            _LOGGER.debug("Tomorrow's workout data: %s", tomorrow_workout)
             
+            # PHASE 1: Quick Initial Load (30 days)
             if not self._first_update_done or not self.data:
-                _LOGGER.debug("Starting full data collection")
+                _LOGGER.info("🚀 PHASE 1: Quick Load - Getting last 30 days...")
+                self._collection_stats["current_phase"] = "quick_load"
                 
+                # Get just last 30 days
+                start_date = now - timedelta(days=30)
                 attendance_task = self._hass.async_add_executor_job(
-                    self.calendar.get_attendance_data
+                    lambda: self.calendar.get_recent_attendance(start_date)
                 )
                 pr_task = self._hass.async_add_executor_job(
                     self.pr_handler.get_formatted_prs
@@ -264,19 +310,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                     attendance_task, pr_task, calendar_task, next_session_task,
                 )
 
-                trainer_stats = self._process_trainer_stats(calendar_events if calendar_events else [])
-
-                self._collection_stats.update({
-                    "total_sessions": attendance_data.get("total_sessions", 0),
-                    "last_full_update": now.isoformat(),
-                    "update_streak": 1
-                })
-
-                self._first_update_done = True
-                self._last_update_time = now
-                
-                return {
-                    **trainer_stats,
+                initial_data = {
                     "zenplanner_fulcrum_sessions": attendance_data.get("total_sessions", 0),
                     "google_calendar_fulcrum_sessions": len(calendar_events) if calendar_events else 0,
                     "total_fulcrum_sessions": self._reconcile_sessions(attendance_data, calendar_events),
@@ -290,41 +324,52 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                     "tomorrow_workout": self._format_workout(tomorrow_workout) if tomorrow_workout else "No workout scheduled",
                     "tomorrow_workout_details": tomorrow_workout
                 }
-            
-            update_start = now - timedelta(days=2)
-            _LOGGER.info("Starting daily data collection from %s", update_start)
-            
-            next_session = await self.google_calendar.get_next_session()
-            pr_data = await self._hass.async_add_executor_job(
-                self.pr_handler.get_formatted_prs
-            )
-            
-            recent_events = await self.google_calendar.get_recent_events(update_start)
-            
-            trainer_stats = {}
-            if recent_events:
-                trainer_stats = self._process_trainer_stats(recent_events)
-                self._collection_stats["new_sessions_today"] = len(recent_events)
-                self._collection_stats["update_streak"] += 1
+
+                self._first_update_done = True
+                self._last_update_time = now
+
+                # PHASE 2: Start Historical Load
+                if not self._historical_load_done and not self._historical_load_in_progress:
+                    _LOGGER.info("🕰️ PHASE 2: Starting background historical load...")
+                    self._hass.async_create_task(self._load_historical_data())
+
+                return initial_data
+
+            # PHASE 3: Regular Incremental Updates
+            else:
+                _LOGGER.debug("🔄 PHASE 3: Incremental update...")
+                self._collection_stats["current_phase"] = "incremental"
                 
-                if len(recent_events) > 0:
-                    _LOGGER.info("🎉 Found %d new sessions! Streak: %d days", 
-                                len(recent_events), 
-                                self._collection_stats["update_streak"])
-            
-            self._last_update_time = now
-            return {
-                **self.data,
-                **trainer_stats,
-                "next_session": next_session,
-                "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
-                "prs_by_type": pr_data.get("prs_by_type", {}),
-                "collection_stats": self._collection_stats
-            }
+                # Just get recent stuff (2 days)
+                update_start = now - timedelta(days=2)
+                next_session = await self.google_calendar.get_next_session()
+                pr_data = await self._hass.async_add_executor_job(
+                    self.pr_handler.get_formatted_prs
+                )
+                recent_events = await self.google_calendar.get_recent_events(update_start)
+                
+                if recent_events:
+                    self._collection_stats["new_sessions_today"] = len(recent_events)
+                    self._collection_stats["update_streak"] += 1
+                    
+                    if len(recent_events) > 0:
+                        _LOGGER.info("🎉 Found %d new sessions! Streak: %d days", 
+                                   len(recent_events), 
+                                   self._collection_stats["update_streak"])
+
+                return {
+                    **self.data,
+                    "next_session": next_session,
+                    "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
+                    "prs_by_type": pr_data.get("prs_by_type", {}),
+                    "collection_stats": self._collection_stats,
+                    "tomorrow_workout": self._format_workout(tomorrow_workout) if tomorrow_workout else "No workout scheduled",
+                    "tomorrow_workout_details": tomorrow_workout
+                }
 
         except Exception as err:
             self._collection_stats["update_streak"] = 0
-            _LOGGER.error("Error updating data: %s", str(err))
+            _LOGGER.error("💥 Update failed: %s", str(err))
             raise
 
     def _reconcile_sessions(self, zenplanner_data: dict, calendar_events: list) -> int:
@@ -457,6 +502,10 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                 attrs["new_sessions_today"] = data["collection_stats"].get("new_sessions_today", 0)
                 attrs["update_streak"] = data["collection_stats"].get("update_streak", 0)
                 attrs["last_full_update"] = data["collection_stats"].get("last_full_update")
+                attrs["current_phase"] = data["collection_stats"].get("current_phase", "unknown")
+                attrs["phase_description"] = self._get_phase_description(
+                    data["collection_stats"].get("current_phase", "unknown")
+                )
             
             if "calendar_events" in data:
                 today = datetime.now().date()
@@ -484,3 +533,16 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                 attrs["total_sessions"] = data[f"trainer_{trainer_name}_sessions"]
 
         return attrs
+
+
+    def _get_phase_description(self, phase: str) -> str:
+        """Get a user-friendly description of the current phase."""
+        phase_descriptions = {
+            "init": "🚀 Starting up...",
+            "quick_load": "⚡ Loading last 30 days",
+            "historical_load": "📚 Loading historical data in background",
+            "historical_load_failed": "❌ Historical load failed - using recent data only",
+            "incremental": "✅ Regular updates active",
+            "unknown": "❓ Status unknown"
+        }
+        return phase_descriptions.get(phase, "❓ Status unknown")

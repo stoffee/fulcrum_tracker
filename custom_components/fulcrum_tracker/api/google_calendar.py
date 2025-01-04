@@ -197,8 +197,6 @@ class AsyncGoogleCalendarHandler:
                                 instructor = first_name
                                 break
 
-            _LOGGER.debug("Final instructor determination: %s", instructor)
-
             processed_event = {
                 'date': start_dt.strftime('%Y-%m-%d'),
                 'time': start_dt.strftime('%H:%M'),
