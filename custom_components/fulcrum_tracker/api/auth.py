@@ -95,6 +95,6 @@ class ZenPlannerAuth:
             return False
 
     @property
-    def requests_session(self) -> requests.Session:
+    def requests_session(self) -> aiohttp.ClientSession:
         """Access the underlying requests session."""
         return self.session
