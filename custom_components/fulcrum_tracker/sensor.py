@@ -233,26 +233,38 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
 
             # Update our stats with the full data
             if attendance_data and calendar_events:
-                self.data = {
+                new_data = {
                     **self.data,
                     "zenplanner_fulcrum_sessions": attendance_data.get("total_sessions", 0),
                     "google_calendar_fulcrum_sessions": len(calendar_events),
                     "total_fulcrum_sessions": self._reconcile_sessions(attendance_data, calendar_events),
                 }
                 
-                trainer_stats = self._process_trainer_stats(calendar_events)
-                self.data.update(trainer_stats)
+                _LOGGER.debug(
+                    "Historical data update - Previous total: %d, New total: %d",
+                    self.data.get("total_fulcrum_sessions", 0),
+                    new_data["total_fulcrum_sessions"]
+                )
+                
+                self.data = new_data
+                
+                # Trigger an update for the sensors
+                await self.async_refresh()
 
             self._historical_load_done = True
             self._collection_stats["current_phase"] = "incremental"
-            _LOGGER.info("📚 Historical data load complete! Total sessions: %d", 
-                        self.data.get("total_fulcrum_sessions", 0))
+            _LOGGER.info(
+                "📚 Historical data load complete! Total sessions: %d",
+                self.data.get("total_fulcrum_sessions", 0)
+            )
 
         except Exception as err:
             _LOGGER.error("💥 Historical data load failed: %s", str(err))
             self._collection_stats["current_phase"] = "historical_load_failed"
         finally:
             self._historical_load_in_progress = False
+            # Ensure we trigger one final refresh
+            await self.async_refresh()
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from APIs."""
