@@ -66,18 +66,19 @@ class MatrixCalendarHandler:
             
     def _parse_workout(self, event: Dict[str, Any]) -> Dict[str, Any]:
         """Parse workout details from calendar event."""
-        _LOGGER.debug("Parsing workout from event: %s", event.get('summary', ''))
+        _LOGGER.debug("Parsing workout from event: %s", event.get('subject', ''))
         
         if not event.get('subject'):
             _LOGGER.debug("No subject found in event")
             return None
             
-        parts = event['subject'].split('|')
+        subject = event['subject']
+        parts = subject.split('|')
         workout_data = {
             'type': parts[0].strip() if len(parts) > 0 else None,
             'lifts': parts[1].strip() if len(parts) > 1 else None,
             'meps': parts[2].strip() if len(parts) > 2 else None,
-            'raw_summary': event['summary']
+            'raw_summary': subject  # Changed from event['summary'] to subject
         }
         
         _LOGGER.debug("Parsed workout data: %s", workout_data)
