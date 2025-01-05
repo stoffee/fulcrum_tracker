@@ -1,4 +1,4 @@
-"""The Fulcrum Fitness Tracker integration."""
+"""The Fulcrum Tracker integration."""
 from __future__ import annotations
 
 import asyncio
@@ -7,8 +7,8 @@ from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.const import Platform, EVENT_HOMEASSISTANT_STOP
+from homeassistant.core import HomeAssistant, Event
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.util.dt import now as dt_now
 
@@ -35,6 +35,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "setup_complete": False,
             "last_update": None,
             "update_failures": 0,
+            "tasks": set(),  # New: Track running tasks
         }
         
         async def scheduled_update(now: datetime) -> None:
@@ -76,7 +77,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             )
             except Exception as err:
                 _LOGGER.error("Error in scheduled update: %s", str(err))
-        
+
         async def delayed_setup() -> None:
             """Perform delayed setup tasks."""
             try:
@@ -97,9 +98,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             except Exception as err:
                 _LOGGER.error("Error in delayed setup: %s", str(err))
                 raise
+
+        # New: Handle cleanup of tasks during shutdown
+        async def cleanup_tasks() -> None:
+            """Clean up running tasks."""
+            entry_data = hass.data[DOMAIN][entry.entry_id]
+            while entry_data["tasks"]:
+                task = entry_data["tasks"].pop()
+                if not task.done():
+                    _LOGGER.debug("Canceling task during shutdown")
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as err:
+                        _LOGGER.error("Error canceling task: %s", str(err))
+
+        # New: Handle shutdown event
+        async def handle_shutdown(event: Event) -> None:
+            """Handle shutdown event."""
+            _LOGGER.info("🛑 Shutting down Fulcrum Tracker integration")
+            await cleanup_tasks()
+
+        # Register shutdown handler
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, handle_shutdown)
         
-        # Start initial setup
-        hass.async_create_task(delayed_setup())
+        # Start initial setup and track the task
+        setup_task = hass.async_create_task(delayed_setup())
+        hass.data[DOMAIN][entry.entry_id]["tasks"].add(setup_task)
         
         return True
 

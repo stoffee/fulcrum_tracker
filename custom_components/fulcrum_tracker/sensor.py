@@ -205,18 +205,16 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
     def _process_trainer_stats(self, calendar_events: list) -> dict:
         """Process trainer statistics from calendar events."""
         trainer_stats = {f"trainer_{name.lower()}_sessions": 0 for name in TRAINERS}
-        _LOGGER.debug("Initial trainer stats keys: %s", list(trainer_stats.keys()))
         
         for event in calendar_events:
             if 'instructor' in event:
                 instructor = event['instructor'].strip().split()[0]
+                # If instructor not recognized, count as Unknown
+                if instructor.lower() not in [t.lower() for t in TRAINERS]:
+                    instructor = "Unknown"
                 key = f"trainer_{instructor.lower()}_sessions"
-                if key in trainer_stats:
-                    trainer_stats[key] += 1
-                else:
-                    _LOGGER.warning("Unrecognized trainer key: %s", key)
+                trainer_stats[key] += 1
         
-        _LOGGER.debug("Final trainer stats: %s", trainer_stats)
         return trainer_stats
 
     async def _load_historical_data(self) -> None:

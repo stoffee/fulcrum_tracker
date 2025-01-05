@@ -58,7 +58,8 @@ TRAINERS = [
     "Sonia",
     "Sydney",
     "Walter",
-    "Zei"
+    "Zei",
+    "Unknown"
 ]
 
 # Exercise Types
