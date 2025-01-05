@@ -68,11 +68,11 @@ class MatrixCalendarHandler:
         """Parse workout details from calendar event."""
         _LOGGER.debug("Parsing workout from event: %s", event.get('summary', ''))
         
-        if not event.get('summary'):
-            _LOGGER.debug("No summary found in event")
+        if not event.get('subject'):
+            _LOGGER.debug("No subject found in event")
             return None
             
-        parts = event['summary'].split('|')
+        parts = event['subject'].split('|')
         workout_data = {
             'type': parts[0].strip() if len(parts) > 0 else None,
             'lifts': parts[1].strip() if len(parts) > 1 else None,
