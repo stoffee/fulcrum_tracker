@@ -34,7 +34,8 @@ class ZenPlannerCalendar:
         url = f"{self.base_url}?&startdate={start_date.strftime('%Y-%m-%d')}"
         current_date = datetime.now()
         
-        async with self.session.get(url) as response:
+        session = await self.auth.requests_session
+        async with session.get(url) as response:
             if not response.ok:
                 _LOGGER.error(f"Failed to fetch month: {response.status}")
                 return []
@@ -80,7 +81,8 @@ class ZenPlannerCalendar:
 
     async def _get_next_month_date(self, current_date: datetime) -> datetime:
         """Get next month's date from calendar navigation."""
-        async with self.session.get(
+        session = await self.auth.requests_session
+        async with session.get(
             f"{self.base_url}?&startdate={current_date.strftime(DATE_FORMAT)}"
         ) as response:
             if not response.ok:
