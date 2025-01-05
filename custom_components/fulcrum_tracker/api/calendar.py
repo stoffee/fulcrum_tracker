@@ -102,7 +102,7 @@ class ZenPlannerCalendar:
         
         # Fallback to manual increment
         if current_date.month == 12:
-            return datetime(current_date.year + 1, 1, 1)
+            return datetime(current_date.year + 1, 1, 1, tzinfo=timezone.utc)
         return current_date.replace(month=current_date.month + 1)
 
     async def get_attendance_data(self) -> Dict[str, Any]:
@@ -119,8 +119,8 @@ class ZenPlannerCalendar:
                     raise ValueError("Failed to authenticate")
             
             # Calculate date range (from Nov 2021 to present)
-            start_date = datetime(2021, 11, 1)
-            current_date = datetime.now()
+            start_date = datetime(2021, 11, 1, tzinfo=timezone.utc)
+            current_date = datetime.now(timezone.utc)
             
             # Initialize counters
             total_sessions = 0
@@ -202,7 +202,7 @@ class ZenPlannerCalendar:
                     
                 # Move to next month
                 if current_month.month == 12:
-                    current_month = datetime(current_month.year + 1, 1, 1)
+                    current_month = datetime(current_month.year + 1, 1, 1, tzinfo=timezone.utc)
                 else:
                     current_month = current_month.replace(month=current_month.month + 1)
 
