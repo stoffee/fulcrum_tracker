@@ -1,6 +1,6 @@
 """ZenPlanner calendar data handler."""
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import asyncio
 from typing import Any, Dict, List, Optional
 
