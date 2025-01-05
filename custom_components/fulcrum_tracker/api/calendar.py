@@ -179,8 +179,11 @@ class ZenPlannerCalendar:
                     raise ValueError("Failed to authenticate")
             
             # Get just the last few days of data
-            current_date = datetime.now()
-            start_month = datetime(start_date.year, start_date.month, 1)
+            # Make sure current_date is timezone-aware
+            current_date = datetime.now(timezone.utc)
+            # Make start_month timezone-aware
+            start_month = datetime(start_date.year, start_date.month, 1, tzinfo=timezone.utc)
+        
             
             all_sessions = []
             current_month = start_month
@@ -190,7 +193,7 @@ class ZenPlannerCalendar:
                 # Filter for only recent sessions
                 recent_sessions = [
                     session for session in month_data 
-                    if datetime.strptime(session['date'], '%Y-%m-%d') >= start_date
+                    if datetime.strptime(session['date'], '%Y-%m-%d').replace(tzinfo=timezone.utc) >= start_date
                 ]
                 all_sessions.extend(recent_sessions)
                 
