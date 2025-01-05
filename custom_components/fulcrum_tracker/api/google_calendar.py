@@ -245,67 +245,6 @@ class AsyncGoogleCalendarHandler:
         age = datetime.now() - self._cache_time
         return age.total_seconds() < DEFAULT_CACHE_TTL
 
-    async def get_calendar_events(self) -> List[Dict[str, Any]]:
-        """Fetch and process calendar events."""
-        if await self._is_cache_valid():
-            _LOGGER.debug("Returning cached calendar data")
-            return self._cache
-
-        if not self.session:
-            self.session = aiohttp.ClientSession()
-
-        try:
-            training_sessions = []
-            start_time = datetime.strptime(DEFAULT_START_DATE, "%Y-%m-%d").isoformat() + 'Z'
-            end_time = datetime.now().isoformat() + 'Z'
-            
-            token = await self._get_access_token()
-            headers = {"Authorization": f"Bearer {token}"}
-
-            for term in CALENDAR_SEARCH_TERMS:
-                _LOGGER.debug("Searching for term: %s", term)
-                
-                params = {
-                    "calendarId": self.calendar_id,
-                    "timeMin": start_time,
-                    "timeMax": end_time,
-                    "q": term,
-                    "singleEvents": "true",
-                    "orderBy": "startTime",
-                    "maxResults": "2500"
-                }
-
-                async with self.session.get(
-                    f"https://www.googleapis.com/calendar/v3/calendars/{self.calendar_id}/events",
-                    params=params,
-                    headers=headers
-                ) as response:
-                    if response.status != 200:
-                        _LOGGER.error("Calendar API request failed: %s", await response.text())
-                        continue
-                    
-                    data = await response.json()
-                    events = data.get("items", [])
-                    _LOGGER.debug("Found %d events for term '%s'", len(events), term)
-                    
-                    for event in events:
-                        session = await self._process_event(event, term)
-                        if session:
-                            training_sessions.append(session)
-
-            unique_sessions = self._deduplicate_sessions(training_sessions)
-            
-            self._cache = unique_sessions
-            self._cache_time = datetime.now()
-            
-            _LOGGER.debug("Found %d unique training sessions with instructors: %s", 
-                       len(unique_sessions), 
-                       {s['instructor'] for s in unique_sessions})
-            return unique_sessions
-
-        except Exception as err:
-            _LOGGER.error("Failed to fetch calendar events: %s", str(err))
-            raise ValueError(ERROR_CALENDAR_FETCH)
 
     @staticmethod
     def _deduplicate_sessions(sessions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
