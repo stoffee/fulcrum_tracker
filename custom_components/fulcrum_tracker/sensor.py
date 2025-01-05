@@ -276,7 +276,11 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 calendar_events = await self.google_calendar.get_calendar_events()
                 next_session = await self.google_calendar.get_next_session()
 
+                # Process trainer stats first
+                trainer_stats = self._process_trainer_stats(calendar_events)
+                
                 initial_data = {
+                    **trainer_stats,  # Include trainer stats in initial data
                     "zenplanner_fulcrum_sessions": attendance_data.get("total_sessions", 0),
                     "google_calendar_fulcrum_sessions": len(calendar_events) if calendar_events else 0,
                     "total_fulcrum_sessions": self._reconcile_sessions(attendance_data, calendar_events),
@@ -321,13 +325,13 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                     self._collection_stats["new_sessions_today"] = len(recent_events)
                     self._collection_stats["update_streak"] += 1
                     
-                    if len(recent_events) > 0:
-                        _LOGGER.info("🎉 Found %d new sessions! Streak: %d days", 
-                                   len(recent_events), 
-                                   self._collection_stats["update_streak"])
+                    # Update trainer stats even in incremental updates
+                    trainer_stats = self._process_trainer_stats(recent_events)
 
+                # Merge existing data with updates
                 return {
                     **self.data,
+                    **trainer_stats,  # Include updated trainer stats
                     "next_session": next_session,
                     "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
                     "prs_by_type": pr_data.get("prs_by_type", {}),
