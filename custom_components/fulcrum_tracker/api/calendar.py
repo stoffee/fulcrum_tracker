@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 import asyncio
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from bs4 import BeautifulSoup
 
@@ -25,19 +26,27 @@ class ZenPlannerCalendar:
         self.auth = auth
         self.session = auth.requests_session
         self.base_url = f"{API_BASE_URL}{API_ENDPOINTS['workouts']}"
-        _LOGGER.debug("Calendar handler initialized")
+        self.timezone = timezone.utc  # Using UTC for consistency with original  # Added timezone handling
+        _LOGGER.debug("Calendar handler initialized with timezone: %s", self.timezone)
+
+    def _ensure_timezone(self, dt: datetime) -> datetime:
+        """Ensure datetime is timezone-aware."""
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=self.timezone)
+        return dt.astimezone(self.timezone)
 
     async def fetch_month(self, start_date: datetime) -> List[Dict[str, Any]]:
         """Fetch a specific month's data."""
-        _LOGGER.debug(f"Fetching month: {start_date.strftime('%B %Y')}")
+        start_date = self._ensure_timezone(start_date)
+        _LOGGER.debug("Fetching month: %s", start_date.strftime('%B %Y'))
         
         url = f"{self.base_url}?&startdate={start_date.strftime('%Y-%m-%d')}"
-        current_date = datetime.now(timezone.utc)
+        current_date = self._ensure_timezone(datetime.now())
         
         session = await self.auth.requests_session
         async with session.get(url) as response:
             if not response.ok:
-                _LOGGER.error(f"Failed to fetch month: {response.status}")
+                _LOGGER.error("Failed to fetch month: %s", response.status)
                 return []
             
             text = await response.text()
@@ -53,7 +62,11 @@ class ZenPlannerCalendar:
                 continue
                 
             date_str = day.get('date')
-            day_date = datetime.strptime(date_str, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+            try:
+                day_date = self._ensure_timezone(datetime.strptime(date_str, '%Y-%m-%d'))
+            except ValueError as e:
+                _LOGGER.error("Error parsing date %s: %s", date_str, str(e))
+                continue
             
             if day_date.month != target_month:
                 continue
@@ -62,9 +75,9 @@ class ZenPlannerCalendar:
             has_results = 'hasResults' in day.get('class', [])
             is_pr = 'isPR' in day.get('class', [])
             
-            # Compare dates with consistent timezone info
+            # Compare dates after ensuring both are timezone-aware
             if day_date.date() > current_date.date():
-                _LOGGER.debug(f"Skipping future date: {date_str}")
+                _LOGGER.debug("Skipping future date: %s", date_str)
                 continue
                     
             if attended:
@@ -82,6 +95,7 @@ class ZenPlannerCalendar:
 
     async def _get_next_month_date(self, current_date: datetime) -> datetime:
         """Get next month's date from calendar navigation."""
+        current_date = self._ensure_timezone(current_date)
         session = await self.auth.requests_session
         async with session.get(
             f"{self.base_url}?&startdate={current_date.strftime(DATE_FORMAT)}"
@@ -96,14 +110,14 @@ class ZenPlannerCalendar:
         if next_link and 'href' in next_link.attrs:
             next_date_str = next_link['href'].split('startdate=')[-1]
             try:
-                return datetime.strptime(next_date_str, DATE_FORMAT)
+                return self._ensure_timezone(datetime.strptime(next_date_str, DATE_FORMAT))
             except ValueError:
                 raise ValueError(f"Invalid date format in navigation: {next_date_str}")
         
         # Fallback to manual increment
         if current_date.month == 12:
-            return datetime(current_date.year + 1, 1, 1, tzinfo=timezone.utc)
-        return current_date.replace(month=current_date.month + 1)
+            return self._ensure_timezone(datetime(current_date.year + 1, 1, 1))
+        return self._ensure_timezone(current_date.replace(month=current_date.month + 1))
 
     async def get_attendance_data(self) -> Dict[str, Any]:
         """Get formatted attendance data for Home Assistant."""
@@ -119,8 +133,8 @@ class ZenPlannerCalendar:
                     raise ValueError("Failed to authenticate")
             
             # Calculate date range (from Nov 2021 to present)
-            start_date = datetime(2021, 11, 1, tzinfo=timezone.utc)
-            current_date = datetime.now(timezone.utc)
+            start_date = self._ensure_timezone(datetime(2021, 11, 1))
+            current_date = self._ensure_timezone(datetime.now())
             
             # Initialize counters
             total_sessions = 0
@@ -130,9 +144,8 @@ class ZenPlannerCalendar:
 
             # Fetch data month by month
             current_month = start_date
-            _LOGGER.debug(f"Fetching data for {current_month.strftime('%B %Y')}")
-            
             while current_month <= current_date:
+                _LOGGER.debug("Fetching data for %s", current_month.strftime('%B %Y'))
                 month_data = await self.fetch_month(current_month)
                 all_sessions.extend(month_data)
                 
@@ -151,9 +164,9 @@ class ZenPlannerCalendar:
                 
                 # Track last session
                 if 'date' in session:
-                    session_date = datetime.strptime(session['date'], '%Y-%m-%d')
-                    # Make timezone-aware
-                    session_date = session_date.replace(tzinfo=timezone.utc)
+                    session_date = self._ensure_timezone(
+                        datetime.strptime(session['date'], '%Y-%m-%d')
+                    )
                     if last_session_date is None or session_date > last_session_date:
                         last_session_date = session_date
 
@@ -168,15 +181,10 @@ class ZenPlannerCalendar:
             _LOGGER.error("Error fetching attendance data: %s", str(err))
             return self._empty_attendance_data()
 
-    def _normalize_date(self, date_obj: datetime) -> datetime:
-        """Ensure a datetime object is timezone-aware."""
-        if date_obj.tzinfo is None:
-            return date_obj.replace(tzinfo=timezone.utc)
-        return date_obj
-
     async def get_recent_attendance(self, start_date: datetime) -> Dict[str, Any]:
         """Get recent attendance data."""
         try:
+            start_date = self._ensure_timezone(start_date)
             _LOGGER.debug("Starting recent attendance fetch from %s", start_date)
             
             # Verify/refresh authentication
@@ -187,12 +195,10 @@ class ZenPlannerCalendar:
                 if not login_success:
                     raise ValueError("Failed to authenticate")
             
-            # Get just the last few days of data
-            # Make sure current_date is timezone-aware
-            current_date = datetime.now(timezone.utc)
-            # Make start_month timezone-aware
-            start_month = datetime(start_date.year, start_date.month, 1, tzinfo=timezone.utc)
-        
+            current_date = self._ensure_timezone(datetime.now())
+            start_month = self._ensure_timezone(
+                datetime(start_date.year, start_date.month, 1)
+            )
             
             all_sessions = []
             current_month = start_month
@@ -202,7 +208,9 @@ class ZenPlannerCalendar:
                 # Filter for only recent sessions
                 recent_sessions = [
                     session for session in month_data 
-                    if datetime.strptime(session['date'], '%Y-%m-%d').replace(tzinfo=timezone.utc) >= start_date
+                    if self._ensure_timezone(
+                        datetime.strptime(session['date'], '%Y-%m-%d')
+                    ) >= start_date
                 ]
                 all_sessions.extend(recent_sessions)
                 
@@ -210,10 +218,7 @@ class ZenPlannerCalendar:
                     break
                     
                 # Move to next month
-                if current_month.month == 12:
-                    current_month = datetime(current_month.year + 1, 1, 1, tzinfo=timezone.utc)
-                else:
-                    current_month = current_month.replace(month=current_month.month + 1)
+                current_month = await self._get_next_month_date(current_month)
 
             # Calculate stats for recent data
             total_sessions = len(all_sessions)
