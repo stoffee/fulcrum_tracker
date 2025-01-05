@@ -81,7 +81,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async def delayed_setup() -> None:
             """Perform delayed setup tasks."""
             try:
-                await asyncio.sleep(20)  # 20 sec delay
+                # await asyncio.sleep(20)  # 20 sec delay
                 await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
                 entry_data = hass.data[DOMAIN][entry.entry_id]
                 entry_data["setup_complete"] = True
