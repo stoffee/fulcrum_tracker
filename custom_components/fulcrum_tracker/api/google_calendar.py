@@ -159,6 +159,44 @@ class AsyncGoogleCalendarHandler:
         self._token_expiry = now + timedelta(seconds=data["expires_in"] - 300)
         return self._token
 
+    def _normalize_instructor_name(self, description: str) -> str:
+        """Normalize instructor name from event description."""
+        if not description:
+            return "Unknown"
+            
+        description = description.lower().strip()
+        
+        # First try exact matches in name mappings
+        for full_name, normalized_name in TRAINER_NAME_MAPPINGS.items():
+            if full_name in description:
+                return normalized_name
+                
+        # Try to extract name after common patterns
+        instructor_patterns = ['instructor:', 'instructor', 'trainer:', 'trainer']
+        for pattern in instructor_patterns:
+            if pattern in description:
+                found_text = description.split(pattern)[1].split('\n')[0].strip()
+                # Clean up the found text
+                found_text = found_text.split('(')[0].strip()  # Remove anything in parentheses
+                found_text = found_text.split('@')[0].strip()  # Remove anything after @
+                
+                # Try matching the cleaned name against mappings
+                for full_name, normalized_name in TRAINER_NAME_MAPPINGS.items():
+                    if full_name in found_text:
+                        return normalized_name
+                        
+                # If no mapping found, try matching first name against TRAINERS list
+                first_name = found_text.split()[0].capitalize()
+                if first_name in TRAINERS:
+                    return first_name
+                    
+        # If we got here and still haven't found a match, try one last scan for trainer names
+        for trainer in TRAINERS:
+            if trainer.lower() in description:
+                return trainer
+                
+        return "Unknown"
+
     async def _process_event(self, event: Dict[str, Any], search_term: str) -> Optional[Dict[str, Any]]:
         """Process a single calendar event."""
         try:
@@ -176,26 +214,7 @@ class AsyncGoogleCalendarHandler:
                 _LOGGER.debug("Error normalizing timezone: %s", str(e))
                 return None
 
-            instructor = "Unknown"
-            if event.get('description'):
-                description = event['description'].lower()
-                
-                # Try direct trainer name match first
-                for trainer in TRAINERS:
-                    if trainer.lower() in description:
-                        instructor = trainer
-                        break
-                
-                # If no match, try instructor patterns
-                if instructor == "Unknown":
-                    instructor_patterns = ['instructor:', 'instructor', 'trainer:', 'trainer']
-                    for pattern in instructor_patterns:
-                        if pattern in description:
-                            found_text = description.split(pattern)[1].split('\n')[0].strip()
-                            first_name = found_text.split()[0].capitalize()
-                            if first_name in TRAINERS:
-                                instructor = first_name
-                                break
+            instructor = self._normalize_instructor_name(event.get('description', ''))
 
             processed_event = {
                 'date': start_dt.strftime('%Y-%m-%d'),

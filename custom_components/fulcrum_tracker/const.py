@@ -62,6 +62,28 @@ TRAINERS = [
     "Unknown"
 ]
 
+TRAINER_NAME_MAPPINGS = {
+    "ash wilson": "Ash",
+    "charlotte rose": "Charlotte",
+    "cate wade": "Cate",
+    "emma peel": "Emma",
+    "emma krnacik": "Emma",
+    "walter frazier": "Walter",
+    "curtis reynolds": "Curtis",
+    "shane tidrick": "Shane",
+    "cheryl chen": "Cheryl",
+    "zei johnson": "Zei",
+    "eric plevin": "Eric",
+    "devon jones": "Devon",
+    "genevieve payne": "Genevieve",
+    "sonia sidiqi": "Sonia",
+    "ellis raymond": "Ellis",
+    "reggie senegal": "Reggie",
+    "shelby seaborn": "Shelby",
+    "dakayla walters": "Dakayla",
+    "sydney carter": "Sydney"
+}
+
 # Exercise Types
 EXERCISE_TYPES = [
     "squat",
