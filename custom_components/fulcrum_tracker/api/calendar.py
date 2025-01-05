@@ -32,7 +32,7 @@ class ZenPlannerCalendar:
         _LOGGER.debug(f"Fetching month: {start_date.strftime('%B %Y')}")
         
         url = f"{self.base_url}?&startdate={start_date.strftime('%Y-%m-%d')}"
-        current_date = datetime.now()
+        current_date = datetime.now(timezone.utc)
         
         session = await self.auth.requests_session
         async with session.get(url) as response:
@@ -53,7 +53,7 @@ class ZenPlannerCalendar:
                 continue
                 
             date_str = day.get('date')
-            day_date = datetime.strptime(date_str, '%Y-%m-%d')
+            day_date = datetime.strptime(date_str, '%Y-%m-%d').replace(tzinfo=timezone.utc)
             
             if day_date.month != target_month:
                 continue
@@ -62,6 +62,7 @@ class ZenPlannerCalendar:
             has_results = 'hasResults' in day.get('class', [])
             is_pr = 'isPR' in day.get('class', [])
             
+            # Compare dates with consistent timezone info
             if day_date.date() > current_date.date():
                 _LOGGER.debug(f"Skipping future date: {date_str}")
                 continue
