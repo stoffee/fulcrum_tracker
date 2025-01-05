@@ -16,6 +16,7 @@ from ..const import (
     ERROR_CALENDAR_AUTH,
     ERROR_CALENDAR_FETCH,
     TRAINERS,
+    TRAINER_NAME_MAPPINGS,
 )
 
 _LOGGER = logging.getLogger(__name__)
