@@ -150,9 +150,12 @@ class ZenPlannerCalendar:
                     current_month_sessions += 1
                 
                 # Track last session
-                session_date = datetime.strptime(session['date'], '%Y-%m-%d')
-                if last_session_date is None or session_date > last_session_date:
-                    last_session_date = session_date
+                if 'date' in session:
+                    session_date = datetime.strptime(session['date'], '%Y-%m-%d')
+                    # Make timezone-aware
+                    session_date = session_date.replace(tzinfo=timezone.utc)
+                    if last_session_date is None or session_date > last_session_date:
+                        last_session_date = session_date
 
             return {
                 "total_sessions": total_sessions,
@@ -164,6 +167,12 @@ class ZenPlannerCalendar:
         except Exception as err:
             _LOGGER.error("Error fetching attendance data: %s", str(err))
             return self._empty_attendance_data()
+
+    def _normalize_date(self, date_obj: datetime) -> datetime:
+        """Ensure a datetime object is timezone-aware."""
+        if date_obj.tzinfo is None:
+            return date_obj.replace(tzinfo=timezone.utc)
+        return date_obj
 
     async def get_recent_attendance(self, start_date: datetime) -> Dict[str, Any]:
         """Get recent attendance data."""
