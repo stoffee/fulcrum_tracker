@@ -40,6 +40,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         
         async def scheduled_update(now: datetime) -> None:
             """Handle the scheduled daily update."""
+            _LOGGER.info(
+                "🔄 Starting scheduled daily update at %s", 
+                now.astimezone(ZoneInfo(UPDATE_TIMEZONE)).strftime("%Y-%m-%d %H:%M:%S %Z")
+            )
             try:
                 entry_data = hass.data[DOMAIN][entry.entry_id]
                 if not entry_data["setup_complete"]:
@@ -75,6 +79,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                     "notification_id": "fulcrum_tracker_update_failed"
                                 }
                             )
+                _LOGGER.info("✅ Scheduled update completed successfully")
             except Exception as err:
                 _LOGGER.error("Error in scheduled update: %s", str(err))
 
@@ -88,6 +93,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.info("✨ Initial setup completed for Fulcrum Tracker")
                 
                 # Schedule daily update only after setup is complete
+                # add debug
+                _LOGGER.info(
+                    "🕒 Registering daily update for %02d:%02d %s", 
+                    UPDATE_TIME_HOUR, 
+                    UPDATE_TIME_MINUTE, 
+                    UPDATE_TIMEZONE
+                )
                 async_track_time_change(
                     hass,
                     scheduled_update,
@@ -95,8 +107,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     minute=UPDATE_TIME_MINUTE,
                     second=0
                 )
+                _LOGGER.info("✅ Daily update scheduler registered")
             except Exception as err:
-                _LOGGER.error("Error in delayed setup: %s", str(err))
+                _LOGGER.error("Error in 7pm scheduler: %s", str(err))
                 raise
 
         # New: Handle cleanup of tasks during shutdown
