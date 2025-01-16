@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Optional, Dict, Any, List
 
 from homeassistant.components.sensor import (
     SensorEntity,
@@ -182,7 +182,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         pr_handler: PRHandler,
         google_calendar: AsyncGoogleCalendarHandler,
         matrix_handler: MatrixCalendarHandler,
-        storage: FulcrumTrackerStore,
+        storage: FulcrumTrackerStore,  # Add storage parameter
     ) -> None:
         """Initialize."""
         super().__init__(
@@ -195,223 +195,18 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         self.pr_handler = pr_handler
         self.google_calendar = google_calendar
         self.matrix_handler = matrix_handler
-        self.storage = storage
-        self._first_update_done = not storage.historical_load_done
-        self._historical_load_done = storage.historical_load_done
-        self._historical_load_in_progress = False
+        self.storage = storage  # Store storage reference
         self._last_update_time = None
         self._collection_stats = {
-            "total_sessions": storage.total_sessions,
+            "total_sessions": 0,
             "new_sessions_today": 0,
-            "last_full_update": storage.last_update,
+            "last_full_update": None,
             "update_streak": 0,
-            "current_phase": storage.initialization_phase
+            "current_phase": storage.initialization_phase  # Use storage phase
         }
-        _LOGGER.debug("🎮 Coordinator initialized with stored state")
+        _LOGGER.debug("🎮 Coordinator initialized in phase: %s", self._collection_stats["current_phase"])
 
-    def _process_trainer_stats(self, calendar_events: list) -> dict:
-        """Process trainer statistics from calendar events."""
-        trainer_stats = {f"trainer_{name.lower()}_sessions": 0 for name in TRAINERS}
-        
-        for event in calendar_events:
-            if 'instructor' in event:
-                instructor = event['instructor'].strip().split()[0]
-                if instructor.lower() not in [t.lower() for t in TRAINERS]:
-                    instructor = "Unknown"
-                key = f"trainer_{instructor.lower()}_sessions"
-                trainer_stats[key] += 1
-        
-        return trainer_stats
-
-    async def _load_historical_data(self) -> None:
-        """Background task to load all historical data."""
-        try:
-            if self._historical_load_done or self._historical_load_in_progress:
-                return
-
-            _LOGGER.info("🕰️ Starting background historical data load...")
-            self._historical_load_in_progress = True
-            self._collection_stats["current_phase"] = "historical_load"
-            await self.storage.async_update_data({
-                "initialization_phase": "historical_load"
-            })
-
-            attendance_data = await self.calendar.get_attendance_data()
-            calendar_events = await self.google_calendar.get_calendar_events()
-
-            if attendance_data and calendar_events:
-                new_data = {
-                    **self.data,
-                    "zenplanner_fulcrum_sessions": attendance_data.get("total_sessions", 0),
-                    "google_calendar_fulcrum_sessions": len(calendar_events),
-                    "total_fulcrum_sessions": self._reconcile_sessions(attendance_data, calendar_events),
-                }
-                
-                _LOGGER.debug(
-                    "Historical data update - Previous total: %d, New total: %d",
-                    self.data.get("total_fulcrum_sessions", 0),
-                    new_data["total_fulcrum_sessions"]
-                )
-                
-                self.data = new_data
-                
-                await self.storage.async_update_session_count(new_data["total_fulcrum_sessions"])
-                await self.storage.async_mark_historical_load_complete()
-                
-                await self.async_refresh()
-
-            self._historical_load_done = True
-            self._collection_stats["current_phase"] = "incremental"
-            await self.storage.async_update_data({
-                "initialization_phase": "incremental"
-            })
-            _LOGGER.info(
-                "📚 Historical data load complete! Total sessions: %d",
-                self.data.get("total_fulcrum_sessions", 0)
-            )
-
-        except Exception as err:
-            _LOGGER.error("💥 Historical data load failed: %s", str(err))
-            self._collection_stats["current_phase"] = "historical_load_failed"
-            await self.storage.async_update_data({
-                "initialization_phase": "historical_load_failed"
-            })
-        finally:
-            self._historical_load_in_progress = False
-            await self.async_refresh()
-
-    async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch data from APIs."""
-        try:
-            now = datetime.now(timezone.utc)
-
-            # Always get tomorrow's workout
-            tomorrow_workout = await self.matrix_handler.get_tomorrow_workout()
-            
-            # PHASE 1: Quick Initial Load (30 days)
-            if not self._first_update_done or not self.data:
-                _LOGGER.info("🚀 PHASE 1: Quick Load - Getting last 30 days...")
-                self._collection_stats["current_phase"] = "quick_load"
-                
-                # Get just last 30 days
-                start_date = now - timedelta(days=30)
-                attendance_data = await self.calendar.get_recent_attendance(start_date)
-                pr_data = await self.pr_handler.get_formatted_prs()
-                calendar_events = await self.google_calendar.get_calendar_events()
-                next_session = await self.google_calendar.get_next_session()
-
-                # Process trainer stats first
-                trainer_stats = self._process_trainer_stats(calendar_events)
-                
-                initial_data = {
-                    **trainer_stats,
-                    "zenplanner_fulcrum_sessions": attendance_data.get("total_sessions", 0),
-                    "google_calendar_fulcrum_sessions": len(calendar_events) if calendar_events else 0,
-                    "total_fulcrum_sessions": self._reconcile_sessions(attendance_data, calendar_events),
-                    "monthly_sessions": attendance_data.get("monthly_sessions", 0),
-                    "last_session": attendance_data.get("last_session"),
-                    "next_session": next_session,
-                    "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
-                    "total_prs": pr_data.get("total_prs", 0),
-                    "prs_by_type": pr_data.get("prs_by_type", {}),
-                    "collection_stats": self._collection_stats,
-                    "tomorrow_workout": self._format_workout(tomorrow_workout) if tomorrow_workout else "No workout scheduled",
-                    "tomorrow_workout_details": tomorrow_workout
-                }
-
-                self._first_update_done = True
-                self._last_update_time = now
-                
-                # Update storage with initial data
-                await self.storage.async_update_data({
-                    "initialization_phase": "quick_load",
-                    "last_update": now.isoformat(),
-                    "total_sessions": initial_data["total_fulcrum_sessions"]
-                })
-
-                # PHASE 2: Start Historical Load if needed
-                if not self._historical_load_done and not self._historical_load_in_progress:
-                    _LOGGER.info("🕰️ PHASE 2: Starting background historical load...")
-                    asyncio.create_task(self._load_historical_data())
-
-                return initial_data
-
-            # PHASE 3: Regular Incremental Updates
-            else:
-                _LOGGER.debug("🔄 PHASE 3: Incremental update...")
-                self._collection_stats["current_phase"] = "incremental"
-                
-                # Get recent data (2 days)
-                update_start = now - timedelta(days=2)
-                next_session = await self.google_calendar.get_next_session()
-                pr_data = await self.pr_handler.get_formatted_prs()
-                
-                # Get recent calendar events
-                recent_events = await self.google_calendar.get_calendar_events(
-                    start_date=update_start,
-                    end_date=now
-                )
-                
-                if recent_events:
-                    self._collection_stats["new_sessions_today"] = len(recent_events)
-                    self._collection_stats["update_streak"] += 1
-                    
-                    # Update trainer stats even in incremental updates
-                    trainer_stats = self._process_trainer_stats(recent_events)
-                    
-                    # Update storage
-                    await self.storage.async_record_update(now.isoformat())
-                    if self.data and "total_fulcrum_sessions" in self.data:
-                        await self.storage.async_update_session_count(
-                            self.data["total_fulcrum_sessions"]
-                        )
-
-                return {
-                    **self.data,
-                    **trainer_stats,
-                    "next_session": next_session,
-                    "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
-                    "prs_by_type": pr_data.get("prs_by_type", {}),
-                    "collection_stats": self._collection_stats,
-                    "tomorrow_workout": self._format_workout(tomorrow_workout) if tomorrow_workout else "No workout scheduled",
-                    "tomorrow_workout_details": tomorrow_workout
-                }
-
-        except Exception as err:
-            self._collection_stats["update_streak"] = 0
-            _LOGGER.error("💥 Update failed: %s", str(err))
-            raise
-
-    def _reconcile_sessions(self, zenplanner_data: dict, calendar_events: list) -> int:
-        """Reconcile session counts between ZenPlanner and Google Calendar."""
-        try:
-            zen_dates = set()
-            if isinstance(zenplanner_data, dict) and "all_sessions" in zenplanner_data:
-                for session in zenplanner_data["all_sessions"]:
-                    if isinstance(session, dict) and "date" in session:
-                        zen_dates.add(session["date"])
-
-            calendar_dates = set()
-            if isinstance(calendar_events, list):
-                for event in calendar_events:
-                    if isinstance(event, dict) and "date" in event:
-                        calendar_dates.add(event["date"])
-
-            unique_dates = zen_dates.union(calendar_dates)
-            overlapping = zen_dates.intersection(calendar_dates)
-
-            _LOGGER.debug(
-                "Session reconciliation - ZenPlanner: %d, Calendar: %d, Unique: %d, Overlap: %d",
-                len(zen_dates), len(calendar_dates), len(unique_dates), len(overlapping)
-            )
-
-            return len(unique_dates)
-
-        except Exception as err:
-            _LOGGER.error("Error reconciling sessions: %s", str(err))
-            return 0
-
-    def _format_workout(self, workout: Optional[dict]) -> str:
+    def _format_workout(self, workout: Optional[Dict[str, Any]]) -> str:
         """Format workout details for display."""
         if not workout:
             return "No workout scheduled"
@@ -426,10 +221,94 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             
         return " | ".join(parts) if parts else "Workout details not available"
 
-    async def _async_stop(self) -> None:
-        """Clean up resources when stopping."""
-        await self.google_calendar.close()
-        await super()._async_stop()
+    async def _async_update_data(self) -> dict[str, Any]:
+        """Fetch data from APIs with phase-aware updates."""
+        try:
+            now = datetime.now(timezone.utc)
+
+            # Always get tomorrow's workout regardless of phase
+            tomorrow_workout = await self.matrix_handler.get_tomorrow_workout()
+            
+            current_phase = self.storage.initialization_phase
+            _LOGGER.debug("🔄 Running update in phase: %s", current_phase)
+
+            if current_phase == "init":
+                # Initial setup - transition to historical load
+                await self.storage.async_transition_phase("historical_load", {
+                    "start_time": now.isoformat()
+                })
+                current_phase = "historical_load"
+
+            if current_phase == "historical_load":
+                _LOGGER.info("📚 Performing historical data load...")
+                # Get full historical data
+                attendance_data = await self.calendar.get_attendance_data()
+                pr_data = await self.pr_handler.get_formatted_prs()
+                calendar_events = await self.google_calendar.get_calendar_events()
+                next_session = await self.google_calendar.get_next_session()
+                # Process trainer stats
+                trainer_stats = self._process_trainer_stats(calendar_events)
+                if attendance_data and calendar_events:
+                    total_sessions = self._reconcile_sessions(attendance_data, calendar_events)
+                    await self.storage.async_update_session_count(total_sessions)
+                    await self.storage.async_transition_phase("incremental", {
+                        "total_sessions": total_sessions,
+                        "completion_time": now.isoformat()
+                    })
+                return {
+                    **trainer_stats,
+                    "zenplanner_fulcrum_sessions": attendance_data.get("total_sessions", 0),
+                    "google_calendar_fulcrum_sessions": len(calendar_events) if calendar_events else 0,
+                    "total_fulcrum_sessions": total_sessions,
+                    "monthly_sessions": attendance_data.get("monthly_sessions", 0),
+                    "last_session": attendance_data.get("last_session"),
+                    "next_session": next_session,
+                    "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
+                    "total_prs": pr_data.get("total_prs", 0),
+                    "prs_by_type": pr_data.get("prs_by_type", {}),
+                    "collection_stats": self._collection_stats,
+                    "tomorrow_workout": self._format_workout(tomorrow_workout),
+                    "tomorrow_workout_details": tomorrow_workout
+                }
+
+            else:  # Incremental mode
+                _LOGGER.debug("♻️ Performing incremental update...")
+                # Get recent data (2 days)
+                update_start = now - timedelta(days=2)
+                next_session = await self.google_calendar.get_next_session()
+                pr_data = await self.pr_handler.get_formatted_prs()
+                
+                recent_events = await self.google_calendar.get_calendar_events(
+                    start_date=update_start,
+                    end_date=now
+                )
+                
+                if recent_events:
+                    self._collection_stats["new_sessions_today"] = len(recent_events)
+                    self._collection_stats["update_streak"] += 1
+                    trainer_stats = self._process_trainer_stats(recent_events)
+                    
+                    # Record the update with proper error handling
+                    try:
+                        await self.storage.async_record_update(now.isoformat())
+                    except Exception as err:
+                        _LOGGER.warning("Failed to record update timestamp: %s", err)
+
+                return {
+                    **(self.data if self.data else {}),
+                    **(trainer_stats if recent_events else {}),
+                    "next_session": next_session,
+                    "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
+                    "prs_by_type": pr_data.get("prs_by_type", {}),
+                    "collection_stats": self._collection_stats,
+                    "tomorrow_workout": self._format_workout(tomorrow_workout),
+                    "tomorrow_workout_details": tomorrow_workout
+                }
+
+        except Exception as err:
+            self._collection_stats["update_streak"] = 0
+            _LOGGER.error("💥 Update failed: %s", str(err))
+            raise
 
 
 class SensorDefaults:

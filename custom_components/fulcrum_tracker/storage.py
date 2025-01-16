@@ -1,7 +1,10 @@
 """Storage handling for Fulcrum Tracker integration."""
 import logging
 from typing import Any, Dict, Optional
+from datetime import datetime
+from typing import List
 
+from homeassistant.util.dt import now as dt_now
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
@@ -90,3 +93,57 @@ class FulcrumTrackerStore:
         _LOGGER.warning("🧹 Clearing all stored data")
         self._data = {}
         await self.async_save()
+    
+    async def async_transition_phase(self, new_phase: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Handle phase transitions with proper state management."""
+        try:
+            current_phase = self.initialization_phase
+            _LOGGER.info("🔄 Phase transition: %s -> %s", current_phase, new_phase)
+
+            transition_data = {
+                "initialization_phase": new_phase,
+                "last_phase_change": dt_now().isoformat(),
+                "previous_phase": current_phase
+            }
+
+            if metadata:
+                transition_data.update(metadata)
+
+            # Phase-specific handling
+            if new_phase == "incremental":
+                if not self.historical_load_done:
+                    _LOGGER.warning("⚠️ Entering incremental mode without historical load!")
+                transition_data["historical_load_done"] = True
+            
+            elif new_phase == "historical_load":
+                transition_data["historical_load_start"] = dt_now().isoformat()
+                if self.historical_load_done:
+                    _LOGGER.warning("⚠️ Restarting historical load - this may cause duplicate data!")
+            
+            # Track phase transition history
+            phase_history = self._data.get("phase_history", [])
+            phase_history.append({
+                "from": current_phase,
+                "to": new_phase,
+                "timestamp": dt_now().isoformat()
+            })
+            
+            # Keep only last 10 transitions
+            transition_data["phase_history"] = phase_history[-10:]
+            
+            await self.async_update_data(transition_data)
+            _LOGGER.debug("✅ Phase transition complete: %s", new_phase)
+
+        except Exception as err:
+            _LOGGER.error("💥 Phase transition failed: %s", str(err))
+            raise
+
+    @property
+    def phase_history(self) -> List[Dict[str, str]]:
+        """Get phase transition history."""
+        return self._data.get("phase_history", [])
+
+    async def async_force_phase(self, phase: str) -> None:
+        """Force a specific phase (for debugging/recovery)."""
+        _LOGGER.warning("⚠️ Forcing phase transition to: %s", phase)
+        await self.async_transition_phase(phase, {"forced": True})

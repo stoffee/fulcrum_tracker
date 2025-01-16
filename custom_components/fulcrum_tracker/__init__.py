@@ -101,47 +101,64 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.error("Error in scheduled update: %s", str(err))
 
         async def delayed_setup() -> None:
-            """Perform delayed setup tasks."""
+            """Perform delayed setup tasks with optimized phase handling."""
             try:
-                await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
                 entry_data = hass.data[DOMAIN][entry.entry_id]
                 storage = entry_data["storage"]
-                
-                # Check if we need historical load
-                if not storage.historical_load_done:
-                    _LOGGER.info("📚 First run detected - will perform historical data load")
+                _LOGGER.info("🚀 Starting Fulcrum Tracker setup...")
+
+                # First, check if platforms need setup
+                if not entry_data.get("platforms_setup"):
+                    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+                    entry_data["platforms_setup"] = True
+                    _LOGGER.debug("✅ Platforms initialized")
+
+                # Determine initialization phase from storage
+                current_phase = storage.initialization_phase
+                _LOGGER.info("📊 Current initialization phase: %s", current_phase)
+
+                if current_phase == "init":
+                    _LOGGER.info("🆕 First run detected - preparing for historical load")
                     await storage.async_update_data({
-                        "initialization_phase": "historical_load"
+                        "initialization_phase": "historical_load",
+                        "first_setup_time": dt_now().isoformat()
                     })
+                elif current_phase == "historical_load" and not storage.historical_load_done:
+                    _LOGGER.info("📚 Resuming interrupted historical data load")
                 else:
-                    _LOGGER.info("🔄 Historical data already loaded - entering incremental mode")
+                    _LOGGER.info("♻️ Entering incremental update mode")
                     await storage.async_update_data({
                         "initialization_phase": "incremental"
                     })
-                
+
+                # Setup is complete, schedule daily updates
+                if not entry_data.get("scheduler_setup"):
+                    _LOGGER.info(
+                        "🕒 Registering daily update for %02d:%02d %s", 
+                        UPDATE_TIME_HOUR, 
+                        UPDATE_TIME_MINUTE, 
+                        UPDATE_TIMEZONE
+                    )
+                    async_track_time_change(
+                        hass,
+                        scheduled_update,
+                        hour=UPDATE_TIME_HOUR,
+                        minute=UPDATE_TIME_MINUTE,
+                        second=0
+                    )
+                    entry_data["scheduler_setup"] = True
+                    _LOGGER.info("✅ Daily update scheduler registered")
+
                 entry_data["setup_complete"] = True
                 await storage.async_update_data({
-                    "setup_complete": True
+                    "setup_complete": True,
+                    "last_setup_time": dt_now().isoformat()
                 })
-                
-                _LOGGER.info("✨ Initial setup completed for Fulcrum Tracker")
-                
-                _LOGGER.info(
-                    "🕒 Registering daily update for %02d:%02d %s", 
-                    UPDATE_TIME_HOUR, 
-                    UPDATE_TIME_MINUTE, 
-                    UPDATE_TIMEZONE
-                )
-                async_track_time_change(
-                    hass,
-                    scheduled_update,
-                    hour=UPDATE_TIME_HOUR,
-                    minute=UPDATE_TIME_MINUTE,
-                    second=0
-                )
-                _LOGGER.info("✅ Daily update scheduler registered")
+
+                _LOGGER.info("✨ Fulcrum Tracker setup completed in %s phase", storage.initialization_phase)
+
             except Exception as err:
-                _LOGGER.error("Error in delayed setup: %s", str(err))
+                _LOGGER.error("💥 Error in delayed setup: %s", str(err))
                 raise
 
         async def cleanup_tasks() -> None:
