@@ -19,6 +19,7 @@ from .const import (
     UPDATE_TIMEZONE,
     UPDATE_MAX_RETRIES,
 )
+from .storage import FulcrumTrackerStore
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS: list[Platform] = [Platform.SENSOR]
@@ -28,14 +29,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         hass.data.setdefault(DOMAIN, {})
         
-        # Store the credentials and setup state
+        # Initialize storage
+        storage = FulcrumTrackerStore(hass)
+        await storage.async_load()
+        
+        # Store the credentials, setup state, and storage
         hass.data[DOMAIN][entry.entry_id] = {
             "username": entry.data["username"],
             "password": entry.data["password"],
             "setup_complete": False,
             "last_update": None,
             "update_failures": 0,
-            "tasks": set(),  # New: Track running tasks
+            "tasks": set(),  # Track running tasks
+            "storage": storage,  # Add storage handler
         }
         
         async def scheduled_update(now: datetime) -> None:
@@ -54,7 +60,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if coordinator:
                     try:
                         await coordinator.async_refresh()
-                        entry_data["last_update"] = dt_now().astimezone(ZoneInfo(UPDATE_TIMEZONE))
+                        current_time = dt_now().astimezone(ZoneInfo(UPDATE_TIMEZONE))
+                        entry_data["last_update"] = current_time
+                        
+                        # Update storage with latest update time and session data
+                        await entry_data["storage"].async_record_update(
+                            current_time.isoformat()
+                        )
+                        if coordinator.data:
+                            await entry_data["storage"].async_update_session_count(
+                                coordinator.data.get("total_fulcrum_sessions", 0)
+                            )
+                        
                         entry_data["update_failures"] = 0
                         _LOGGER.info("🎉 Scheduled update completed successfully!")
                         
@@ -86,14 +103,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async def delayed_setup() -> None:
             """Perform delayed setup tasks."""
             try:
-                # await asyncio.sleep(20)  # 20 sec delay
                 await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
                 entry_data = hass.data[DOMAIN][entry.entry_id]
+                storage = entry_data["storage"]
+                
+                # Check if we need historical load
+                if not storage.historical_load_done:
+                    _LOGGER.info("📚 First run detected - will perform historical data load")
+                    await storage.async_update_data({
+                        "initialization_phase": "historical_load"
+                    })
+                else:
+                    _LOGGER.info("🔄 Historical data already loaded - entering incremental mode")
+                    await storage.async_update_data({
+                        "initialization_phase": "incremental"
+                    })
+                
                 entry_data["setup_complete"] = True
+                await storage.async_update_data({
+                    "setup_complete": True
+                })
+                
                 _LOGGER.info("✨ Initial setup completed for Fulcrum Tracker")
                 
-                # Schedule daily update only after setup is complete
-                # add debug
                 _LOGGER.info(
                     "🕒 Registering daily update for %02d:%02d %s", 
                     UPDATE_TIME_HOUR, 
@@ -109,10 +141,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
                 _LOGGER.info("✅ Daily update scheduler registered")
             except Exception as err:
-                _LOGGER.error("Error in 7pm scheduler: %s", str(err))
+                _LOGGER.error("Error in delayed setup: %s", str(err))
                 raise
 
-        # New: Handle cleanup of tasks during shutdown
         async def cleanup_tasks() -> None:
             """Clean up running tasks."""
             entry_data = hass.data[DOMAIN][entry.entry_id]
@@ -128,10 +159,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     except Exception as err:
                         _LOGGER.error("Error canceling task: %s", str(err))
 
-        # New: Handle shutdown event
         async def handle_shutdown(event: Event) -> None:
             """Handle shutdown event."""
             _LOGGER.info("🛑 Shutting down Fulcrum Tracker integration")
+            entry_data = hass.data[DOMAIN][entry.entry_id]
+            # Save final state to storage
+            if "storage" in entry_data:
+                await entry_data["storage"].async_save()
             await cleanup_tasks()
 
         # Register shutdown handler
@@ -151,6 +185,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     try:
         if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+            # Save final state before unloading
+            entry_data = hass.data[DOMAIN][entry.entry_id]
+            if "storage" in entry_data:
+                await entry_data["storage"].async_save()
             hass.data[DOMAIN].pop(entry.entry_id)
         return unload_ok
     except Exception as err:

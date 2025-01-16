@@ -36,6 +36,7 @@ from .const import (
     TRAINERS,
     EXERCISE_TYPES,
 )
+from .storage import FulcrumTrackerStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -141,6 +142,9 @@ async def async_setup_entry(
     pr_handler = PRHandler(auth, DEFAULT_USER_ID)
     google_calendar = AsyncGoogleCalendarHandler(service_account_path, calendar_id)
     matrix_handler = MatrixCalendarHandler(google_calendar)
+    
+    # Get storage from domain data
+    storage = hass.data[DOMAIN][config_entry.entry_id]["storage"]
 
     coordinator = FulcrumDataUpdateCoordinator(
         hass=hass,
@@ -150,6 +154,7 @@ async def async_setup_entry(
         pr_handler=pr_handler,
         google_calendar=google_calendar,
         matrix_handler=matrix_handler,
+        storage=storage,
     )
 
     await coordinator.async_refresh()
@@ -177,6 +182,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         pr_handler: PRHandler,
         google_calendar: AsyncGoogleCalendarHandler,
         matrix_handler: MatrixCalendarHandler,
+        storage: FulcrumTrackerStore,
     ) -> None:
         """Initialize."""
         super().__init__(
@@ -189,18 +195,19 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         self.pr_handler = pr_handler
         self.google_calendar = google_calendar
         self.matrix_handler = matrix_handler
-        self._first_update_done = False
-        self._historical_load_done = False
+        self.storage = storage
+        self._first_update_done = not storage.historical_load_done
+        self._historical_load_done = storage.historical_load_done
         self._historical_load_in_progress = False
         self._last_update_time = None
         self._collection_stats = {
-            "total_sessions": 0,
+            "total_sessions": storage.total_sessions,
             "new_sessions_today": 0,
-            "last_full_update": None,
+            "last_full_update": storage.last_update,
             "update_streak": 0,
-            "current_phase": "init"
+            "current_phase": storage.initialization_phase
         }
-        _LOGGER.debug("🎮 Coordinator initialized and ready to rock!")
+        _LOGGER.debug("🎮 Coordinator initialized with stored state")
 
     def _process_trainer_stats(self, calendar_events: list) -> dict:
         """Process trainer statistics from calendar events."""
@@ -209,7 +216,6 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         for event in calendar_events:
             if 'instructor' in event:
                 instructor = event['instructor'].strip().split()[0]
-                # If instructor not recognized, count as Unknown
                 if instructor.lower() not in [t.lower() for t in TRAINERS]:
                     instructor = "Unknown"
                 key = f"trainer_{instructor.lower()}_sessions"
@@ -226,12 +232,13 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.info("🕰️ Starting background historical data load...")
             self._historical_load_in_progress = True
             self._collection_stats["current_phase"] = "historical_load"
+            await self.storage.async_update_data({
+                "initialization_phase": "historical_load"
+            })
 
-            # Get full historical data
             attendance_data = await self.calendar.get_attendance_data()
             calendar_events = await self.google_calendar.get_calendar_events()
 
-            # Update our stats with the full data
             if attendance_data and calendar_events:
                 new_data = {
                     **self.data,
@@ -248,11 +255,16 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 
                 self.data = new_data
                 
-                # Trigger an update for the sensors
+                await self.storage.async_update_session_count(new_data["total_fulcrum_sessions"])
+                await self.storage.async_mark_historical_load_complete()
+                
                 await self.async_refresh()
 
             self._historical_load_done = True
             self._collection_stats["current_phase"] = "incremental"
+            await self.storage.async_update_data({
+                "initialization_phase": "incremental"
+            })
             _LOGGER.info(
                 "📚 Historical data load complete! Total sessions: %d",
                 self.data.get("total_fulcrum_sessions", 0)
@@ -261,9 +273,11 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.error("💥 Historical data load failed: %s", str(err))
             self._collection_stats["current_phase"] = "historical_load_failed"
+            await self.storage.async_update_data({
+                "initialization_phase": "historical_load_failed"
+            })
         finally:
             self._historical_load_in_progress = False
-            # Ensure we trigger one final refresh
             await self.async_refresh()
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -290,7 +304,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 trainer_stats = self._process_trainer_stats(calendar_events)
                 
                 initial_data = {
-                    **trainer_stats,  # Include trainer stats in initial data
+                    **trainer_stats,
                     "zenplanner_fulcrum_sessions": attendance_data.get("total_sessions", 0),
                     "google_calendar_fulcrum_sessions": len(calendar_events) if calendar_events else 0,
                     "total_fulcrum_sessions": self._reconcile_sessions(attendance_data, calendar_events),
@@ -307,8 +321,15 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
 
                 self._first_update_done = True
                 self._last_update_time = now
+                
+                # Update storage with initial data
+                await self.storage.async_update_data({
+                    "initialization_phase": "quick_load",
+                    "last_update": now.isoformat(),
+                    "total_sessions": initial_data["total_fulcrum_sessions"]
+                })
 
-                # PHASE 2: Start Historical Load
+                # PHASE 2: Start Historical Load if needed
                 if not self._historical_load_done and not self._historical_load_in_progress:
                     _LOGGER.info("🕰️ PHASE 2: Starting background historical load...")
                     asyncio.create_task(self._load_historical_data())
@@ -337,11 +358,17 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                     
                     # Update trainer stats even in incremental updates
                     trainer_stats = self._process_trainer_stats(recent_events)
+                    
+                    # Update storage
+                    await self.storage.async_record_update(now.isoformat())
+                    if self.data and "total_fulcrum_sessions" in self.data:
+                        await self.storage.async_update_session_count(
+                            self.data["total_fulcrum_sessions"]
+                        )
 
-                # Merge existing data with updates
                 return {
                     **self.data,
-                    **trainer_stats,  # Include updated trainer stats
+                    **trainer_stats,
                     "next_session": next_session,
                     "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
                     "prs_by_type": pr_data.get("prs_by_type", {}),
@@ -566,7 +593,6 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
         # Start with default attributes
         default_state = SensorDefaults.get_loading_state(self.entity_description.key)
         attrs = default_state["attributes"].copy()
-        data = self.coordinator.data or {}
 
         # If we don't have coordinator data yet, return defaults
         if self.coordinator.data is None:
@@ -605,28 +631,20 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                 "sessions_this_month": data.get("monthly_sessions", 0),
                 "last_session_date": data.get("last_session"),
                 "calendar_total": data.get("google_calendar_fulcrum_sessions", 0),
-                "loading_status": "complete"
+                "loading_status": "complete",
+                "storage_state": {
+                    "historical_load_done": self.coordinator.storage.historical_load_done,
+                    "last_update": self.coordinator.storage.last_update,
+                    "initialization_phase": self.coordinator.storage.initialization_phase
+                }
             })
             
             if "collection_stats" in data:
                 attrs.update({
                     "new_sessions_today": data["collection_stats"].get("new_sessions_today", 0),
                     "update_streak": data["collection_stats"].get("update_streak", 0),
-                    "last_full_update": data["collection_stats"].get("last_full_update"),
-                    "current_phase": data["collection_stats"].get("current_phase", "unknown"),
-                    "phase_description": self._get_phase_description(
-                        data["collection_stats"].get("current_phase", "unknown")
-                    )
+                    "current_phase": data["collection_stats"].get("current_phase", "unknown")
                 })
-            
-            if "calendar_events" in data:
-                today = datetime.now().date()
-                week_start = today - timedelta(days=today.weekday())
-                week_sessions = sum(
-                    1 for session in data["calendar_events"]
-                    if datetime.strptime(session['date'], '%Y-%m-%d').date() >= week_start
-                )
-                attrs["sessions_this_week"] = week_sessions
 
         # Next session attributes
         elif self.entity_description.key == "next_session" and data.get("next_session"):
@@ -649,15 +667,3 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                 })
 
         return attrs
-
-    def _get_phase_description(self, phase: str) -> str:
-        """Get a user-friendly description of the current phase."""
-        phase_descriptions = {
-            "init": "🚀 Starting up...",
-            "quick_load": "⚡ Loading last 30 days",
-            "historical_load": "📚 Loading historical data in background",
-            "historical_load_failed": "❌ Historical load failed - using recent data only",
-            "incremental": "✅ Regular updates active",
-            "unknown": "❓ Status unknown"
-        }
-        return phase_descriptions.get(phase, "❓ Status unknown")

@@ -20,6 +20,12 @@ DEFAULT_CLIENT_ID = ""  # Will be provided by user during setup
 DEFAULT_MONTHLY_COST = 315.35  # Default monthly cost
 DEFAULT_CACHE_TTL = 86400  # 1 hour in seconds
 
+# Storage Constants
+STORAGE_VERSION = "1.0"
+STORAGE_KEY = "fulcrum_tracker_state"
+DOMAIN_STORAGE = f"{DOMAIN}.storage"
+SERVICE_REFRESH = "manual_refresh"
+
 # Scheduling Constants
 UPDATE_TIME_HOUR = 19  # 7 PM
 UPDATE_TIME_MINUTE = 0
