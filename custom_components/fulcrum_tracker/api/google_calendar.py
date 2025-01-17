@@ -70,19 +70,8 @@ class AsyncGoogleCalendarHandler:
             for term in CALENDAR_SEARCH_TERMS:
                 _LOGGER.debug("Searching calendar %s for term: %s", calendar_id, term)
                 
-                params = {
-                    "calendarId": calendar_id,
-                    "timeMin": start_time_str,
-                    "timeMax": end_time_str,
-                    "q": term,
-                    "singleEvents": "true",
-                    "orderBy": "startTime",
-                    "maxResults": "2500"
-                }
-
-                # URL encode the calendar ID and construct proper URL
-                encoded_calendar_id = quote(self.default_calendar_id.replace('@', '%40'), safe='')
-                url = f"https://www.googleapis.com/calendar/v3/calendars/{encoded_calendar_id}/events"
+                # Let aiohttp handle all URL encoding
+                url = f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events"
                 params = {
                     "timeMin": start_time_str,
                     "timeMax": end_time_str,
@@ -279,7 +268,6 @@ class AsyncGoogleCalendarHandler:
     async def get_next_session(self) -> Optional[Dict[str, Any]]:
         if not self.session:
             self.session = aiohttp.ClientSession()
-
         try:
             now = datetime.utcnow().isoformat() + 'Z'
             future = (datetime.utcnow() + timedelta(days=30)).isoformat() + 'Z'
@@ -287,33 +275,38 @@ class AsyncGoogleCalendarHandler:
             headers = {"Authorization": f"Bearer {token}"}
 
             for term in CALENDAR_SEARCH_TERMS:
-                    encoded_calendar_id = quote(self.default_calendar_id.replace('@', '%40'), safe='')
-                    url = f"https://www.googleapis.com/calendar/v3/calendars/{encoded_calendar_id}/events"
-                    params = {
-                        "timeMin": now,
-                        "timeMax": future,
-                        "q": term,
-                        "singleEvents": "true",
-                        "orderBy": "startTime",
-                        "maxResults": "1"
-                    }
+                # Let aiohttp handle URL encoding
+                url = f"https://www.googleapis.com/calendar/v3/calendars/{self.default_calendar_id}/events"
+                params = {
+                    "timeMin": now,
+                    "timeMax": future,
+                    "q": term,
+                    "singleEvents": "true",
+                    "orderBy": "startTime",
+                    "maxResults": "1"
+                }
 
-                    async with self.session.get(
-                        url,
-                        params=params,
-                        headers=headers
-                    ) as response:
-                        if response.status != 200:
-                            continue
+                async with self.session.get(
+                    url,
+                    params=params,
+                    headers=headers
+                ) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        _LOGGER.error("Calendar API request failed for %s with status %s: %s", 
+                                    self.default_calendar_id, response.status, error_text)
+                        _LOGGER.debug("Request details - URL: %s, Headers: %s", 
+                                    response.url, headers)
+                        continue
                             
-                        data = await response.json()
-                        events = data.get("items", [])
-                        if events:
-                            session = await self._process_event(events[0], term)
-                            if session:
-                                _LOGGER.debug("Next session found: %s with %s", 
-                                          session.get('date'), session.get('instructor'))
-                                return session
+                    data = await response.json()
+                    events = data.get("items", [])
+                    if events:
+                        session = await self._process_event(events[0], term)
+                        if session:
+                            _LOGGER.debug("Next session found: %s with %s", 
+                                      session.get('date'), session.get('instructor'))
+                            return session
 
             return None
 
