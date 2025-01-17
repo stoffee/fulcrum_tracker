@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
+from urllib.parse import quote
 
 import aiohttp
 import jwt
@@ -79,8 +80,20 @@ class AsyncGoogleCalendarHandler:
                     "maxResults": "2500"
                 }
 
+                # URL encode the calendar ID and construct proper URL
+                encoded_calendar_id = quote(calendar_id)
+                url = f"https://www.googleapis.com/calendar/v3/calendars/{encoded_calendar_id}/events"
+                params = {
+                    "timeMin": start_time_str,
+                    "timeMax": end_time_str,
+                    "q": term,
+                    "singleEvents": "true",
+                    "orderBy": "startTime",
+                    "maxResults": "2500"
+                }
+                
                 async with self.session.get(
-                    f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events",
+                    url,
                     params=params,
                     headers=headers
                 ) as response:
@@ -274,32 +287,33 @@ class AsyncGoogleCalendarHandler:
             headers = {"Authorization": f"Bearer {token}"}
 
             for term in CALENDAR_SEARCH_TERMS:
-                params = {
-                    "calendarId": self.calendar_id,
-                    "timeMin": now,
-                    "timeMax": future,
-                    "q": term,
-                    "singleEvents": "true",
-                    "orderBy": "startTime",
-                    "maxResults": "1"
-                }
+                    encoded_calendar_id = quote(self.calendar_id)
+                    url = f"https://www.googleapis.com/calendar/v3/calendars/{encoded_calendar_id}/events"
+                    params = {
+                        "timeMin": now,
+                        "timeMax": future,
+                        "q": term,
+                        "singleEvents": "true",
+                        "orderBy": "startTime",
+                        "maxResults": "1"
+                    }
 
-                async with self.session.get(
-                    f"https://www.googleapis.com/calendar/v3/calendars/{self.calendar_id}/events",
-                    params=params,
-                    headers=headers
-                ) as response:
-                    if response.status != 200:
-                        continue
-                        
-                    data = await response.json()
-                    events = data.get("items", [])
-                    if events:
-                        session = await self._process_event(events[0], term)
-                        if session:
-                            _LOGGER.debug("Next session found: %s with %s", 
-                                      session.get('date'), session.get('instructor'))
-                            return session
+                    async with self.session.get(
+                        url,
+                        params=params,
+                        headers=headers
+                    ) as response:
+                        if response.status != 200:
+                            continue
+                            
+                        data = await response.json()
+                        events = data.get("items", [])
+                        if events:
+                            session = await self._process_event(events[0], term)
+                            if session:
+                                _LOGGER.debug("Next session found: %s with %s", 
+                                          session.get('date'), session.get('instructor'))
+                                return session
 
             return None
 
