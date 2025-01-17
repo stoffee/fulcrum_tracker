@@ -85,8 +85,11 @@ class AsyncGoogleCalendarHandler:
                     headers=headers
                 ) as response:
                     if response.status != 200:
-                        _LOGGER.error("Calendar API request failed for %s: %s", 
-                                    calendar_id, await response.text())
+                        error_text = await response.text()
+                        _LOGGER.error("Calendar API request failed for %s with status %s: %s", 
+                                    calendar_id, response.status, error_text)
+                        _LOGGER.debug("Request details - URL: %s, Headers: %s", 
+                                    response.url, headers)
                         continue
                     
                     data = await response.json()
