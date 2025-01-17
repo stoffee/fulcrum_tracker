@@ -81,7 +81,7 @@ class AsyncGoogleCalendarHandler:
                 }
 
                 # URL encode the calendar ID and construct proper URL
-                encoded_calendar_id = quote(self.default_calendar_id, safe='')
+                encoded_calendar_id = quote(self.default_calendar_id.replace('@', '%40'), safe='')
                 url = f"https://www.googleapis.com/calendar/v3/calendars/{encoded_calendar_id}/events"
                 params = {
                     "timeMin": start_time_str,
@@ -287,7 +287,7 @@ class AsyncGoogleCalendarHandler:
             headers = {"Authorization": f"Bearer {token}"}
 
             for term in CALENDAR_SEARCH_TERMS:
-                    encoded_calendar_id = quote(self.default_calendar_id, safe='')
+                    encoded_calendar_id = quote(self.default_calendar_id.replace('@', '%40'), safe='')
                     url = f"https://www.googleapis.com/calendar/v3/calendars/{encoded_calendar_id}/events"
                     params = {
                         "timeMin": now,
