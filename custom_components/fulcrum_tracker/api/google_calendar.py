@@ -22,11 +22,11 @@ from ..const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-"""Async Google Calendar handler for Fulcrum Tracker integration."""
 class AsyncGoogleCalendarHandler:
     """Async handler for Google Calendar operations."""
 
     def __init__(self, service_account_path: str, default_calendar_id: str) -> None:
+        """Initialize the calendar handler."""
         self.service_account_path = service_account_path
         self.default_calendar_id = default_calendar_id
         self.calendar_id = default_calendar_id
@@ -50,8 +50,10 @@ class AsyncGoogleCalendarHandler:
             _LOGGER.debug("Returning cached calendar data")
             return self._cache
 
+        # Handle calendar ID encoding once
         calendar_id = calendar_id or self.default_calendar_id
-        _LOGGER.debug("Fetching events for calendar: %s", calendar_id)
+        encoded_calendar_id = quote(calendar_id, safe='')
+        _LOGGER.debug("Fetching events for calendar: %s (encoded: %s)", calendar_id, encoded_calendar_id)
 
         start_time = start_date or datetime.strptime(DEFAULT_START_DATE, "%Y-%m-%d")
         end_time = end_date or datetime.now()
@@ -67,13 +69,12 @@ class AsyncGoogleCalendarHandler:
             headers = {"Authorization": f"Bearer {token}"}
             training_sessions = []
 
+            # Base URL constructed once
+            url = f"https://www.googleapis.com/calendar/v3/calendars/{encoded_calendar_id}/events"
+
             for term in CALENDAR_SEARCH_TERMS:
                 _LOGGER.debug("Searching calendar %s for term: %s", calendar_id, term)
                 
-                # Let aiohttp handle all URL encoding
-                calendar_id = calendar_id or self.default_calendar_id
-                encoded_calendar_id = quote(calendar_id, safe='')
-                url = f"https://www.googleapis.com/calendar/v3/calendars/{encoded_calendar_id}/events"
                 params = {
                     "timeMin": start_time_str,
                     "timeMax": end_time_str,
@@ -82,30 +83,44 @@ class AsyncGoogleCalendarHandler:
                     "orderBy": "startTime",
                     "maxResults": "2500"
                 }
-                
-                async with self.session.get(
-                    url,
-                    params=params,
-                    headers=headers,
-                    raise_for_status=True
-                ) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        _LOGGER.error("Calendar API request failed for %s with status %s: %s", 
-                                    calendar_id, response.status, error_text)
-                        _LOGGER.debug("Request details - URL: %s, Headers: %s", 
-                                    response.url, headers)
-                        continue
-                    
-                    data = await response.json()
-                    events = data.get("items", [])
-                    _LOGGER.debug("Found %d events for term '%s' in calendar %s", 
-                               len(events), term, calendar_id)
-                    
-                    for event in events:
-                        session = await self._process_event(event, term)
-                        if session:
-                            training_sessions.append(session)
+
+                try:
+                    _LOGGER.debug("Making request to URL: %s with params: %s", url, params)
+                    async with self.session.get(
+                        url,
+                        params=params,
+                        headers=headers
+                    ) as response:
+                        if response.status != 200:
+                            error_text = await response.text()
+                            _LOGGER.error(
+                                "Calendar API request failed for %s with status %s: %s", 
+                                calendar_id, response.status, error_text
+                            )
+                            _LOGGER.debug(
+                                "Request details - URL: %s", 
+                                str(response.real_url)
+                            )
+                            continue
+                        
+                        data = await response.json()
+                        events = data.get("items", [])
+                        _LOGGER.debug(
+                            "Found %d events for term '%s' in calendar %s", 
+                            len(events), term, calendar_id
+                        )
+                        
+                        for event in events:
+                            session = await self._process_event(event, term)
+                            if session:
+                                training_sessions.append(session)
+
+                except Exception as term_err:
+                    _LOGGER.error(
+                        "Error processing term %s: %s", 
+                        term, str(term_err)
+                    )
+                    continue
 
             unique_sessions = self._deduplicate_sessions(training_sessions)
             
@@ -117,11 +132,14 @@ class AsyncGoogleCalendarHandler:
             return unique_sessions
 
         except Exception as err:
-            _LOGGER.error("Failed to fetch calendar events for %s: %s", 
-                       calendar_id, str(err), exc_info=True)
+            _LOGGER.error(
+                "Failed to fetch calendar events for %s: %s", 
+                calendar_id, str(err), exc_info=True
+            )
             raise ValueError(ERROR_CALENDAR_FETCH)
 
     async def _load_credentials(self) -> Dict[str, Any]:
+        """Load credentials from service account file."""
         try:
             async with async_open(self.service_account_path, 'r') as f:
                 return json.loads(await f.read())
@@ -130,6 +148,7 @@ class AsyncGoogleCalendarHandler:
             raise ValueError(ERROR_CALENDAR_AUTH)
 
     async def _get_access_token(self) -> str:
+        """Get or refresh the access token."""
         now = datetime.utcnow()
         
         if self._token and self._token_expiry and self._token_expiry > now:
@@ -253,7 +272,6 @@ class AsyncGoogleCalendarHandler:
         age = datetime.now() - self._cache_time
         return age.total_seconds() < DEFAULT_CACHE_TTL
 
-
     @staticmethod
     def _deduplicate_sessions(sessions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Remove duplicate sessions while preserving order."""
@@ -269,6 +287,7 @@ class AsyncGoogleCalendarHandler:
         return unique_sessions
 
     async def get_next_session(self) -> Optional[Dict[str, Any]]:
+        """Get the next scheduled session."""
         if not self.session:
             self.session = aiohttp.ClientSession()
         try:
@@ -277,9 +296,11 @@ class AsyncGoogleCalendarHandler:
             token = await self._get_access_token()
             headers = {"Authorization": f"Bearer {token}"}
 
+            # Encode calendar ID
+            encoded_calendar_id = quote(self.default_calendar_id, safe='')
+            url = f"https://www.googleapis.com/calendar/v3/calendars/{encoded_calendar_id}/events"
+
             for term in CALENDAR_SEARCH_TERMS:
-                # Let aiohttp handle URL encoding
-                url = f"https://www.googleapis.com/calendar/v3/calendars/{self.default_calendar_id}/events"
                 params = {
                     "timeMin": now,
                     "timeMax": future,
@@ -289,18 +310,23 @@ class AsyncGoogleCalendarHandler:
                     "maxResults": "1"
                 }
 
+                _LOGGER.debug("Making next session request to URL: %s with params: %s", url, params)
+                
                 async with self.session.get(
                     url,
                     params=params,
-                    headers=headers,
-                    raise_for_status=True
+                    headers=headers
                 ) as response:
                     if response.status != 200:
                         error_text = await response.text()
-                        _LOGGER.error("Calendar API request failed for %s with status %s: %s", 
-                                    self.default_calendar_id, response.status, error_text)
-                        _LOGGER.debug("Request details - URL: %s, Headers: %s", 
-                                    response.url, headers)
+                        _LOGGER.error(
+                            "Calendar API request failed for %s with status %s: %s", 
+                            self.default_calendar_id, response.status, error_text
+                        )
+                        _LOGGER.debug(
+                            "Request details - URL: %s", 
+                            str(response.real_url)
+                        )
                         continue
                             
                     data = await response.json()
@@ -308,8 +334,10 @@ class AsyncGoogleCalendarHandler:
                     if events:
                         session = await self._process_event(events[0], term)
                         if session:
-                            _LOGGER.debug("Next session found: %s with %s", 
-                                      session.get('date'), session.get('instructor'))
+                            _LOGGER.debug(
+                                "Next session found: %s with %s", 
+                                session.get('date'), session.get('instructor')
+                            )
                             return session
 
             return None
