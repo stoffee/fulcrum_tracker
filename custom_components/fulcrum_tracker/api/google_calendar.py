@@ -71,8 +71,11 @@ class AsyncGoogleCalendarHandler:
                 _LOGGER.debug("Searching calendar %s for term: %s", calendar_id, term)
                 
                 # Let aiohttp handle all URL encoding
-                url = f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events"
+                calendar_id = calendar_id or self.default_calendar_id
+                encoded_calendar_id = quote(calendar_id)  # URL encode the calendar ID
+                url = f"https://www.googleapis.com/calendar/v3/calendars/{encoded_calendar_id}/events"
                 params = {
+                    "calendarId": calendar_id,
                     "timeMin": start_time_str,
                     "timeMax": end_time_str,
                     "q": term,
@@ -84,7 +87,8 @@ class AsyncGoogleCalendarHandler:
                 async with self.session.get(
                     url,
                     params=params,
-                    headers=headers
+                    headers=headers,
+                    raise_for_status=True
                 ) as response:
                     if response.status != 200:
                         error_text = await response.text()
@@ -289,7 +293,8 @@ class AsyncGoogleCalendarHandler:
                 async with self.session.get(
                     url,
                     params=params,
-                    headers=headers
+                    headers=headers,
+                    raise_for_status=True
                 ) as response:
                     if response.status != 200:
                         error_text = await response.text()
