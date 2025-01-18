@@ -72,10 +72,9 @@ class AsyncGoogleCalendarHandler:
                 
                 # Let aiohttp handle all URL encoding
                 calendar_id = calendar_id or self.default_calendar_id
-                encoded_calendar_id = quote(calendar_id)  # URL encode the calendar ID
+                encoded_calendar_id = quote(calendar_id, safe='')
                 url = f"https://www.googleapis.com/calendar/v3/calendars/{encoded_calendar_id}/events"
                 params = {
-                    "calendarId": calendar_id,
                     "timeMin": start_time_str,
                     "timeMax": end_time_str,
                     "q": term,
