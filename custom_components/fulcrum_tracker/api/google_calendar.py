@@ -58,8 +58,8 @@ class AsyncGoogleCalendarHandler:
         start_time = start_date or datetime.strptime(DEFAULT_START_DATE, "%Y-%m-%d")
         end_time = end_date or datetime.now()
 
-        start_time_str = start_time.isoformat() + 'Z'
-        end_time_str = end_time.isoformat() + 'Z'
+        start_time_str = start_time.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        end_time_str = end_time.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         
         if not self.session:
             self.session = aiohttp.ClientSession()
@@ -291,8 +291,8 @@ class AsyncGoogleCalendarHandler:
         if not self.session:
             self.session = aiohttp.ClientSession()
         try:
-            now = datetime.utcnow().isoformat() + 'Z'
-            future = (datetime.utcnow() + timedelta(days=30)).isoformat() + 'Z'
+            now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            future = (datetime.now(timezone.utc) + timedelta(days=30)).strftime('%Y-%m-%dT%H:%M:%SZ')
             token = await self._get_access_token()
             headers = {"Authorization": f"Bearer {token}"}
 
