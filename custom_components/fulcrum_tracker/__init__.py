@@ -22,6 +22,7 @@ from .const import (
     UPDATE_MAX_RETRIES,
 )
 from .storage import FulcrumTrackerStore
+from .coordinator import FulcrumDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BUTTON]
