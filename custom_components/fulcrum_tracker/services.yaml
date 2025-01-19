@@ -1,0 +1,30 @@
+# Service definitions for Fulcrum Tracker
+
+manual_refresh:
+  name: Manual Refresh
+  description: >
+    Manually trigger a full refresh of Fulcrum Tracker data.
+    This will reload all historical data and may take several minutes to complete.
+  fields:
+    entity_id:
+      name: Entity
+      description: The Fulcrum Tracker entity to refresh
+      required: true
+      selector:
+        entity:
+          integration: fulcrum_tracker
+          domain: sensor
+    force:
+      name: Force Refresh
+      description: Force refresh even if cooldown period hasn't elapsed
+      required: false
+      default: false
+      selector:
+        boolean:
+    notify:
+      name: Show Notifications
+      description: Show progress notifications during refresh
+      required: false
+      default: true
+      selector:
+        boolean:

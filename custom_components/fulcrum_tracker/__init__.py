@@ -6,6 +6,8 @@ import logging
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
+from homeassistant.const import Platform
+from homeassistant.components import button
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform, EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant, Event
@@ -22,7 +24,7 @@ from .const import (
 from .storage import FulcrumTrackerStore
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BUTTON]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Fulcrum Tracker from a config entry."""
@@ -45,6 +47,90 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         }
         hass.data[DOMAIN][entry.entry_id] = entry_data
         
+        async def handle_manual_refresh(call) -> None:
+            """Handle the manual refresh service call."""
+            entity_id = call.data.get("entity_id")
+            force = call.data.get("force", False)
+            notify = call.data.get("notify", True)
+            
+            _LOGGER.info("🔄 Manual refresh triggered for %s (force=%s)", entity_id, force)
+            
+            try:
+                entry_data = hass.data[DOMAIN][entry.entry_id]
+                
+                # Check cooldown unless force is True
+                last_refresh = entry_data.get("last_manual_refresh")
+                if not force and last_refresh:
+                    cooldown = timedelta(minutes=30)  # 30 minute cooldown
+                    time_since = dt_now() - last_refresh
+                    if time_since < cooldown:
+                        remaining = cooldown - time_since
+                        message = f"Please wait {remaining.seconds // 60} minutes before refreshing again"
+                        _LOGGER.warning("⏳ %s", message)
+                        if notify:
+                            await hass.services.async_call(
+                                "persistent_notification",
+                                "create",
+                                {
+                                    "title": "Refresh Cooldown",
+                                    "message": message
+                                }
+                            )
+                        return
+
+                # Update storage phase
+                storage = entry_data["storage"]
+                await storage.async_transition_phase("historical_load", {
+                    "trigger": "manual_refresh",
+                    "force": force
+                })
+                
+                if notify:
+                    await hass.services.async_call(
+                        "persistent_notification",
+                        "create",
+                        {
+                            "title": "Fulcrum Tracker Refresh",
+                            "message": "Starting manual refresh. This may take several minutes..."
+                        }
+                    )
+
+                # Trigger the refresh
+                coordinator = entry_data.get("coordinator")
+                if coordinator:
+                    await coordinator.async_refresh()
+                    entry_data["last_manual_refresh"] = dt_now()
+                    
+                    if notify:
+                        await hass.services.async_call(
+                            "persistent_notification",
+                            "create",
+                            {
+                                "title": "Fulcrum Tracker Refresh Complete",
+                                "message": "Manual refresh completed successfully! 🎉"
+                            }
+                        )
+                
+            except Exception as err:
+                error_msg = f"Manual refresh failed: {str(err)}"
+                _LOGGER.error("💥 %s", error_msg)
+                if notify:
+                    await hass.services.async_call(
+                        "persistent_notification",
+                        "create",
+                        {
+                            "title": "Refresh Failed",
+                            "message": error_msg
+                        }
+                    )
+
+        # Register our service
+        hass.services.async_register(
+            DOMAIN,
+            "manual_refresh",
+            handle_manual_refresh
+        )
+
         async def scheduled_update(now: datetime) -> None:
             """Handle the scheduled daily update."""
             _LOGGER.info(

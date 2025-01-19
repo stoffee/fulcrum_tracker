@@ -170,6 +170,52 @@ async def async_setup_entry(
 
     async_add_entities(entities)
 
+"""Button platform for Fulcrum Tracker."""
+from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+from .const import DOMAIN
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up Fulcrum Tracker button."""
+    button = FulcrumRefreshButton(hass, config_entry)
+    async_add_entities([button], True)
+
+class FulcrumRefreshButton(ButtonEntity):
+    """Representation of a Fulcrum Tracker refresh button."""
+
+    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:
+        """Initialize the button."""
+        self.hass = hass
+        self._attr_unique_id = f"{config_entry.entry_id}_refresh"
+        self._attr_name = "Fulcrum Tracker Refresh"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, config_entry.entry_id)},
+            name="Fulcrum Fitness",
+            manufacturer="Fulcrum Fitness PDX",
+            model="Training Tracker"
+        )
+        self._config_entry = config_entry
+
+    async def async_press(self) -> None:
+        """Handle the button press."""
+        await self.hass.services.async_call(
+            DOMAIN,
+            "manual_refresh",
+            {
+                "entity_id": f"sensor.{self._config_entry.entry_id}_total_fulcrum_sessions",
+                "notify": True
+            },
+            blocking=True
+        )
+
 class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching Fulcrum data."""
 
@@ -182,7 +228,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         pr_handler: PRHandler,
         google_calendar: AsyncGoogleCalendarHandler,
         matrix_handler: MatrixCalendarHandler,
-        storage: FulcrumTrackerStore,  # Add storage parameter
+        storage: FulcrumTrackerStore,
     ) -> None:
         """Initialize."""
         super().__init__(
@@ -195,14 +241,22 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         self.pr_handler = pr_handler
         self.google_calendar = google_calendar
         self.matrix_handler = matrix_handler
-        self.storage = storage  # Store storage reference
+        self.storage = storage
         self._last_update_time = None
+        self._cache = {}
+        self._cache_time = None
         self._collection_stats = {
             "total_sessions": 0,
             "new_sessions_today": 0,
             "last_full_update": None,
             "update_streak": 0,
-            "current_phase": storage.initialization_phase  # Use storage phase
+            "current_phase": storage.initialization_phase,
+            "refresh_in_progress": False,
+            "refresh_start_time": None,
+            "last_refresh_completed": None,
+            "refresh_duration": 0,
+            "refresh_success": None,
+            "refresh_type": None
         }
         _LOGGER.debug("🎮 Coordinator initialized in phase: %s", self._collection_stats["current_phase"])
 
@@ -221,12 +275,46 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             
         return " | ".join(parts) if parts else "Workout details not available"
 
-    async def _async_update_data(self) -> dict[str, Any]:
+    async def manual_refresh(self) -> None:
+        """Handle manual refresh request."""
+        try:
+            _LOGGER.info("🔄 Starting manual refresh")
+            
+            # Reset storage phase
+            await self.storage.async_transition_phase("historical_load", {
+                "trigger": "manual_refresh",
+                "start_time": datetime.now(timezone.utc).isoformat()
+            })
+            
+            # Clear any cached data
+            self._cache = {}
+            self._cache_time = None
+            
+            # Force a full refresh
+            await self._async_update_data(manual_refresh=True)
+            
+            _LOGGER.info("✅ Manual refresh completed successfully")
+            
+        except Exception as err:
+            _LOGGER.error("❌ Manual refresh failed: %s", str(err))
+            self._collection_stats.update({
+                "refresh_in_progress": False,
+                "refresh_success": False,
+                "last_error": str(err)
+            })
+            raise
+
+    async def _async_update_data(self, manual_refresh: bool = False) -> dict[str, Any]:
         """Fetch data from APIs with phase-aware updates."""
         try:
             now = datetime.now(timezone.utc)
-
-            # Always get tomorrow's workout regardless of phase
+            
+            # Track refresh state
+            self._collection_stats["refresh_in_progress"] = True
+            self._collection_stats["refresh_start_time"] = now.isoformat()
+            self._collection_stats["refresh_type"] = "manual" if manual_refresh else "scheduled"
+            
+            # Get tomorrow's workout regardless of phase
             tomorrow_workout = await self.matrix_handler.get_tomorrow_workout()
             
             current_phase = self.storage.initialization_phase
@@ -255,6 +343,17 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                         "total_sessions": total_sessions,
                         "completion_time": now.isoformat()
                     })
+
+                # Update collection stats with completion info
+                self._collection_stats.update({
+                    "refresh_in_progress": False,
+                    "last_refresh_completed": now.isoformat(),
+                    "refresh_duration": (now - datetime.fromisoformat(self._collection_stats["refresh_start_time"])).total_seconds(),
+                    "refresh_success": True,
+                    "total_items_processed": total_sessions,
+                    "last_update_type": "manual" if manual_refresh else "scheduled"
+                })
+
                 return {
                     **trainer_stats,
                     "zenplanner_fulcrum_sessions": attendance_data.get("total_sessions", 0),
@@ -294,6 +393,16 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                     except Exception as err:
                         _LOGGER.warning("Failed to record update timestamp: %s", err)
 
+                # Update collection stats with completion info for incremental update
+                self._collection_stats.update({
+                    "refresh_in_progress": False,
+                    "last_refresh_completed": now.isoformat(),
+                    "refresh_duration": (now - datetime.fromisoformat(self._collection_stats["refresh_start_time"])).total_seconds(),
+                    "refresh_success": True,
+                    "total_items_processed": len(recent_events) if recent_events else 0,
+                    "last_update_type": "manual" if manual_refresh else "scheduled"
+                })
+
                 return {
                     **(self.data if self.data else {}),
                     **(trainer_stats if recent_events else {}),
@@ -306,7 +415,12 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 }
 
         except Exception as err:
-            self._collection_stats["update_streak"] = 0
+            self._collection_stats.update({
+                "refresh_in_progress": False,
+                "refresh_success": False,
+                "last_error": str(err),
+                "update_streak": 0
+            })
             _LOGGER.error("💥 Update failed: %s", str(err))
             raise
 
