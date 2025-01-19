@@ -158,7 +158,7 @@ async def async_setup_entry(
         storage=storage,
     )
 
-    await coordinator.async_refresh()
+    await coordinator.async_config_entry_first_refresh()
 
     entities = [
         FulcrumSensor(
@@ -170,55 +170,6 @@ async def async_setup_entry(
     ]
 
     async_add_entities(entities)
-
-"""Button platform for Fulcrum Tracker."""
-from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-
-from .const import DOMAIN
-
-async def async_setup_entry(
-    hass: HomeAssistant,
-    config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
-    """Set up Fulcrum Tracker button."""
-    button = FulcrumRefreshButton(hass, config_entry)
-    async_add_entities([button], True)
-
-class FulcrumRefreshButton(ButtonEntity):
-    """Representation of a Fulcrum Tracker refresh button."""
-
-    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:
-        """Initialize the button."""
-        self.hass = hass
-        self._attr_unique_id = f"{config_entry.entry_id}_refresh"
-        self._attr_name = "Fulcrum Tracker Refresh"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, config_entry.entry_id)},
-            name="Fulcrum Fitness",
-            manufacturer="Fulcrum Fitness PDX",
-            model="Training Tracker"
-        )
-        self._config_entry = config_entry
-
-    async def async_press(self) -> None:
-        """Handle the button press."""
-        await self.hass.services.async_call(
-            DOMAIN,
-            "manual_refresh",
-            {
-                "entity_id": f"sensor.{self._config_entry.entry_id}_total_fulcrum_sessions",
-                "notify": True
-            },
-            blocking=True
-        )
-
-
-
 
 class SensorDefaults:
     """Handle default values for all sensor types."""

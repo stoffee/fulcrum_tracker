@@ -19,6 +19,12 @@ _LOGGER = logging.getLogger(__name__)
 
 class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching Fulcrum data."""
+    TRAINERS = [
+        "ash", "cate", "charlotte", "cheryl", "curtis", 
+        "dakayla", "devon", "ellis", "emma", "eric", 
+        "genevieve", "reggie", "shane", "shelby", "sonia", 
+        "sydney", "walter", "zei", "unknown"
+    ]
 
     def __init__(
         self,
@@ -104,6 +110,40 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 "last_error": str(err)
             })
             raise
+
+    def _process_trainer_stats(self, calendar_events: list[dict[str, Any]]) -> dict[str, Any]:
+        """Process trainer statistics from calendar events."""
+        trainer_stats = {f"trainer_{trainer.lower()}_sessions": 0 for trainer in self.TRAINERS}
+        
+        if not calendar_events:
+            return trainer_stats
+            
+        for event in calendar_events:
+            instructor = event.get('instructor', 'Unknown').lower()
+            stat_key = f"trainer_{instructor}_sessions"
+            if stat_key in trainer_stats:
+                trainer_stats[stat_key] += 1
+                
+        return trainer_stats
+
+    def _reconcile_sessions(self, attendance_data: dict[str, Any], calendar_events: list[dict[str, Any]]) -> int:
+        """Reconcile session counts between attendance and calendar data."""
+        # Get base count from attendance data
+        total_sessions = attendance_data.get("total_sessions", 0)
+        
+        # Add any calendar events not counted in attendance
+        if calendar_events:
+            calendar_count = len(calendar_events)
+            # If attendance data is significantly different, use calendar data
+            if abs(total_sessions - calendar_count) > 5:  # Threshold for mismatch
+                _LOGGER.warning(
+                    "Session count mismatch - Attendance: %d, Calendar: %d",
+                    total_sessions,
+                    calendar_count
+                )
+                total_sessions = max(total_sessions, calendar_count)
+                
+        return total_sessions
 
     async def _async_update_data(self, manual_refresh: bool = False) -> dict[str, Any]:
         """Fetch data from APIs with phase-aware updates."""

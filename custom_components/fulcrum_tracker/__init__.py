@@ -276,7 +276,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, handle_shutdown)
         
         # First set up the platforms
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        #await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        if not await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS):
+            return False
         entry_data = hass.data[DOMAIN][entry.entry_id]
         entry_data["platforms_setup"] = True
         _LOGGER.debug("✅ Platforms initialized")
