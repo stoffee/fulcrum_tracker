@@ -34,7 +34,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await storage.async_load()
         
         # Store the credentials, setup state, and storage
-        hass.data[DOMAIN][entry.entry_id] = {
+        entry_data = {
             "username": entry.data["username"],
             "password": entry.data["password"],
             "setup_complete": False,
@@ -43,6 +43,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "tasks": set(),  # Track running tasks
             "storage": storage,  # Add storage handler
         }
+        hass.data[DOMAIN][entry.entry_id] = entry_data
         
         async def scheduled_update(now: datetime) -> None:
             """Handle the scheduled daily update."""
@@ -107,11 +108,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 storage = entry_data["storage"]
                 _LOGGER.info("🚀 Starting Fulcrum Tracker setup...")
 
-                # First, check if platforms need setup
+                # Verify platforms were initialized
                 if not entry_data.get("platforms_setup"):
-                    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-                    entry_data["platforms_setup"] = True
-                    _LOGGER.debug("✅ Platforms initialized")
+                    _LOGGER.error("Platforms not initialized before delayed setup")
+                    return False
 
                 # Determine initialization phase from storage
                 current_phase = storage.initialization_phase
@@ -188,9 +188,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Register shutdown handler
         hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, handle_shutdown)
         
-        # Start initial setup and track the task
+        # First set up the platforms
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        entry_data = hass.data[DOMAIN][entry.entry_id]
+        entry_data["platforms_setup"] = True
+        _LOGGER.debug("✅ Platforms initialized")
+        
+        # Then start initial setup and track the task
         setup_task = hass.async_create_task(delayed_setup())
-        hass.data[DOMAIN][entry.entry_id]["tasks"].add(setup_task)
+        entry_data["tasks"].add(setup_task)
         
         return True
 
