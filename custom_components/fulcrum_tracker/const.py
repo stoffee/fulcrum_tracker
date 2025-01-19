@@ -1,5 +1,6 @@
 """Constants for the Fulcrum Tracker integration."""
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from datetime import timedelta
 
 DOMAIN = "fulcrum_tracker"
 
