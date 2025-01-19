@@ -14,6 +14,7 @@ CONF_SERVICE_ACCOUNT_PATH = "service_account_path"
 # Default Values
 DEFAULT_START_DATE = "2021-11-01"
 DEFAULT_UPDATE_INTERVAL = 1440  # minutes
+SCAN_INTERVAL = timedelta(minutes=DEFAULT_UPDATE_INTERVAL)
 DEFAULT_PERSON_ID = ""  # Will be provided by user during setup
 DEFAULT_USER_ID = DEFAULT_PERSON_ID 
 DEFAULT_CLIENT_ID = ""  # Will be provided by user during setup
