@@ -190,13 +190,16 @@ class AsyncGoogleCalendarHandler:
     def _normalize_instructor_name(self, description: str) -> str:
         """Normalize instructor name from event description."""
         if not description:
+            _LOGGER.debug("Empty description - returning Unknown")
             return "Unknown"
             
         description = description.lower().strip()
+        _LOGGER.debug("Processing description: %s", description[:100])
         
         # First try exact matches in name mappings
         for full_name, normalized_name in TRAINER_NAME_MAPPINGS.items():
             if full_name in description:
+                _LOGGER.debug("Found exact match: %s -> %s", full_name, normalized_name)
                 return normalized_name
                 
         # Try to extract name after common patterns
@@ -207,22 +210,28 @@ class AsyncGoogleCalendarHandler:
                 # Clean up the found text
                 found_text = found_text.split('(')[0].strip()  # Remove anything in parentheses
                 found_text = found_text.split('@')[0].strip()  # Remove anything after @
+
+                _LOGGER.debug("Found instructor text: '%s' using pattern: '%s'", found_text, pattern)
                 
                 # Try matching the cleaned name against mappings
                 for full_name, normalized_name in TRAINER_NAME_MAPPINGS.items():
                     if full_name in found_text:
+                        _LOGGER.debug("Found instructor text: '%s' using pattern: '%s'", found_text, pattern)
                         return normalized_name
                         
                 # If no mapping found, try matching first name against TRAINERS list
                 first_name = found_text.split()[0].capitalize()
                 if first_name in TRAINERS:
+                    _LOGGER.debug("Matched first name: %s", first_name)
                     return first_name
                     
         # If we got here and still haven't found a match, try one last scan for trainer names
         for trainer in TRAINERS:
             if trainer.lower() in description:
+                _LOGGER.debug("Found trainer name in description: %s", trainer)
                 return trainer
                 
+        _LOGGER.warning("Could not extract trainer name from: %s", description[:100])
         return "Unknown"
 
     async def _process_event(self, event: Dict[str, Any], search_term: str) -> Optional[Dict[str, Any]]:

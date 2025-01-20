@@ -138,17 +138,45 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
 
     def _process_trainer_stats(self, calendar_events: list[dict[str, Any]]) -> dict[str, Any]:
         """Process trainer statistics from calendar events."""
+        _LOGGER.info("Starting trainer stats processing with %d events", len(calendar_events))
+        
+        # Initialize counters for all trainers
         trainer_stats = {f"trainer_{trainer.lower()}_sessions": 0 for trainer in self.TRAINERS}
+        _LOGGER.debug("Initialized trainer stats: %s", trainer_stats)
         
         if not calendar_events:
+            _LOGGER.warning("No calendar events to process!")
             return trainer_stats
-            
+        
+        # Debug first few events
+        for event in calendar_events[:5]:
+            _LOGGER.debug("Sample event data: %s", {
+                'instructor': event.get('instructor'),
+                'description': event.get('description', '')[:100],
+                'subject': event.get('subject', '')
+            })
+        
+        unmatched_trainers = set()
         for event in calendar_events:
-            instructor = event.get('instructor', 'Unknown').lower()
+            raw_instructor = event.get('instructor', 'Unknown')
+            instructor = raw_instructor.lower()
             stat_key = f"trainer_{instructor}_sessions"
+            
             if stat_key in trainer_stats:
                 trainer_stats[stat_key] += 1
-                
+                _LOGGER.debug("Increment session for %s (total: %d)", 
+                            raw_instructor, trainer_stats[stat_key])
+            else:
+                unmatched_trainers.add(raw_instructor)
+                _LOGGER.warning("Unmatched trainer found: %s", raw_instructor)
+        
+        if unmatched_trainers:
+            _LOGGER.warning("Found unmatched trainers: %s", unmatched_trainers)
+        
+        # Log final counts
+        active_trainers = {k: v for k, v in trainer_stats.items() if v > 0}
+        _LOGGER.info("Final trainer session counts: %s", active_trainers)
+        
         return trainer_stats
 
     def _reconcile_sessions(self, attendance_data: dict[str, Any], calendar_events: list[dict[str, Any]]) -> int:
