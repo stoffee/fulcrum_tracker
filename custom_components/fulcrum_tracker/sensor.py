@@ -307,6 +307,11 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                 default_state["state"]
             )
             return default_state["state"]
+
+        # Add debug logging for total_fulcrum_sessions
+        if self.entity_description.key == "total_fulcrum_sessions":
+            _LOGGER.info("📊 Total Fulcrum Sessions sensor received data: %s", 
+                        self.coordinator.data.get("total_fulcrum_sessions"))
             
         # Handle PR sensors
         if self.entity_description.key.startswith("pr_"):

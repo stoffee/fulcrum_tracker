@@ -292,6 +292,9 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             else:  # Incremental mode
                 _LOGGER.debug("♻️ Performing incremental update...")
                 try:
+                    # Add debug log right at the start
+                    _LOGGER.info("🔍 Starting incremental update with storage sessions: %s", 
+                                self.storage._data.get("total_sessions", 0))
                     # Create all incremental tasks
                     tasks = {
                         "next_session": self.google_calendar.get_next_session(),
@@ -302,6 +305,10 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                             end_date=now
                         )
                     }
+
+                    # Add debug before return
+                    _LOGGER.info("📊 Preparing incremental return data with sessions: %s",
+                                self.storage._data.get("total_sessions", 0))
                     
                     # Execute all tasks in parallel
                     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
