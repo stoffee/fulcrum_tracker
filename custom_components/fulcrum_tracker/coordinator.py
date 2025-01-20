@@ -278,47 +278,69 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
 
             else:  # Incremental mode
                 _LOGGER.debug("♻️ Performing incremental update...")
-                # Get recent data (2 days)
-                update_start = now - timedelta(days=2)
-                next_session = await self.google_calendar.get_next_session()
-                pr_data = await self.pr_handler.get_formatted_prs()
-                
-                recent_events = await self.google_calendar.get_calendar_events(
-                    start_date=update_start,
-                    end_date=now
-                )
-                
-                if recent_events:
-                    self._collection_stats["new_sessions_today"] = len(recent_events)
-                    self._collection_stats["update_streak"] += 1
-                    trainer_stats = self._process_trainer_stats(recent_events)
+                try:
+                    # Create all incremental tasks
+                    tasks = {
+                        "next_session": self.google_calendar.get_next_session(),
+                        "pr_data": self.pr_handler.get_formatted_prs(),
+                        "workout": workout_task,
+                        "recent_events": self.google_calendar.get_calendar_events(
+                            start_date=now - timedelta(days=2),
+                            end_date=now
+                        )
+                    }
                     
-                    # Record the update with proper error handling
-                    try:
-                        await self.storage.async_record_update(now.isoformat())
-                    except Exception as err:
-                        _LOGGER.warning("Failed to record update timestamp: %s", err)
+                    # Execute all tasks in parallel
+                    results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+                    data = dict(zip(tasks.keys(), results))
+                    
+                    # Check for any exceptions
+                    for key, result in data.items():
+                        if isinstance(result, Exception):
+                            _LOGGER.error("Failed to fetch %s: %s", key, str(result))
+                            raise result
+                    
+                    # Process results
+                    next_session = data["next_session"]
+                    pr_data = data["pr_data"]
+                    tomorrow_workout = data["workout"]
+                    recent_events = data["recent_events"]
+                    
+                    if recent_events:
+                        self._collection_stats["new_sessions_today"] = len(recent_events)
+                        self._collection_stats["update_streak"] += 1
+                        trainer_stats = self._process_trainer_stats(recent_events)
+                        
+                        try:
+                            await self.storage.async_record_update(now.isoformat())
+                        except Exception as err:
+                            _LOGGER.warning("Failed to record update timestamp: %s", err)
 
-                # Update collection stats with completion info for incremental update
-                self._collection_stats.update({
-                    "refresh_in_progress": False,
-                    "last_refresh_completed": now.isoformat(),
-                    "refresh_duration": (now - datetime.fromisoformat(self._collection_stats["refresh_start_time"])).total_seconds(),
-                    "refresh_success": True,
-                    "total_items_processed": len(recent_events) if recent_events else 0,
-                    "last_update_type": "manual" if manual_refresh else "scheduled"
-                })
+                    # Update collection stats
+                    self._collection_stats.update({
+                        "refresh_in_progress": False,
+                        "last_refresh_completed": now.isoformat(),
+                        "refresh_duration": (now - datetime.fromisoformat(
+                            self._collection_stats["refresh_start_time"]
+                        )).total_seconds(),
+                        "refresh_success": True,
+                        "total_items_processed": len(recent_events) if recent_events else 0,
+                        "last_update_type": "manual" if manual_refresh else "scheduled"
+                    })
 
-                return {
-                    **(self.data if self.data else {}),
-                    **(trainer_stats if recent_events else {}),
-                    "next_session": next_session,
-                    "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
-                    "prs_by_type": pr_data.get("prs_by_type", {}),
-                    "collection_stats": self._collection_stats,
-                    "tomorrow_workout": self._format_workout(tomorrow_workout),
-                    "tomorrow_workout_details": tomorrow_workout
-                }
+                    return {
+                        **(self.data if self.data else {}),
+                        **(trainer_stats if recent_events else {}),
+                        "next_session": next_session,
+                        "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
+                        "prs_by_type": pr_data.get("prs_by_type", {}),
+                        "collection_stats": self._collection_stats,
+                        "tomorrow_workout": self._format_workout(tomorrow_workout),
+                        "tomorrow_workout_details": tomorrow_workout
+                    }
+                except Exception as fetch_err:
+                    _LOGGER.error("💥 Incremental data fetch failed: %s", str(fetch_err))
+                    raise
 
         except Exception as err:
             self._collection_stats.update({
