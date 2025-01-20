@@ -21,6 +21,10 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Fulcrum Tracker button."""
+    _LOGGER.debug(
+        "Setting up Fulcrum refresh button. Config entry id: %s", 
+        config_entry.entry_id
+    )
     button = FulcrumRefreshButton(hass, config_entry)
     async_add_entities([button], True)
 

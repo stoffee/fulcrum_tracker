@@ -158,6 +158,9 @@ async def async_setup_entry(
         storage=storage,
     )
 
+    # this line stores the coordinator reference
+    hass.data[DOMAIN][config_entry.entry_id]["coordinator"] = coordinator
+
     await coordinator.async_config_entry_first_refresh()
 
     entities = [
