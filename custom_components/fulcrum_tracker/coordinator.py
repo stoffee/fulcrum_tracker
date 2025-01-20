@@ -175,6 +175,13 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         try:
             now = datetime.now(timezone.utc)
             current_phase = self.storage.initialization_phase
+
+            # Add debug logging
+            _LOGGER.info("🔍 Debug - Storage Data:")
+            _LOGGER.info("  - Total Sessions in Storage: %s", self.storage._data.get("total_sessions", 0))
+            _LOGGER.info("  - Phase: %s", current_phase)
+            _LOGGER.info("  - Historical Load Done: %s", self.storage.historical_load_done)
+
             
             # Track refresh state
             self._collection_stats.update({
@@ -256,6 +263,11 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                         "total_items_processed": total_sessions,
                         "last_update_type": "manual" if manual_refresh else "scheduled"
                     })
+
+                    # Before returning, add debug logging
+                    _LOGGER.info("📊 Debug - Return Data:")
+                    _LOGGER.info("  - Total Sessions: %s", total_sessions)
+                    _LOGGER.info("  - Collection Stats: %s", self._collection_stats)
 
                     return {
                         **trainer_stats,
