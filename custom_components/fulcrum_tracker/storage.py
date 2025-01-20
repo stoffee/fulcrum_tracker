@@ -28,10 +28,37 @@ class FulcrumTrackerStore:
         try:
             stored = await self.store.async_load()
             _LOGGER.debug("🎮 Loading stored state data")
-            self._data = stored if stored else {}
+            
+            if not stored:
+                # New installation - set initial state
+                self._data = {
+                    "initialization_phase": "init",
+                    "historical_load_done": False,
+                    "first_setup_time": None,
+                    "total_sessions": 0,
+                    "last_update": None
+                }
+                _LOGGER.info("📦 New installation detected - initializing storage")
+                await self.async_save()
+            else:
+                self._data = stored
+                _LOGGER.debug("📋 Loaded existing storage data: %s", 
+                            {k: v for k, v in self._data.items() if k != "credentials"})
         except Exception as err:
             _LOGGER.error("💥 Failed to load stored data: %s", str(err))
             self._data = {}
+
+    async def async_verify_phase(self) -> None:
+        """Verify and correct phase if necessary."""
+        current_phase = self._data.get("initialization_phase", "init")
+        historical_done = self._data.get("historical_load_done", False)
+        
+        if not historical_done and current_phase == "incremental":
+            _LOGGER.warning("⚠️ Found incremental phase without historical load - correcting")
+            await self.async_transition_phase("init", {
+                "reason": "phase_correction",
+                "previous_phase": current_phase
+            })
 
     async def async_save(self) -> None:
         """Save data to storage."""
@@ -98,7 +125,18 @@ class FulcrumTrackerStore:
         """Handle phase transitions with proper state management."""
         try:
             current_phase = self.initialization_phase
-            _LOGGER.info("🔄 Phase transition: %s -> %s", current_phase, new_phase)
+            _LOGGER.info("🔄 Phase transition request: %s -> %s", current_phase, new_phase)
+
+            # Validate phase transition
+            valid_transitions = {
+                "init": ["historical_load"],
+                "historical_load": ["incremental"],
+                "incremental": ["historical_load"]  # Only allowed for manual refresh
+            }
+
+            if new_phase not in valid_transitions.get(current_phase, []):
+                _LOGGER.error("❌ Invalid phase transition: %s -> %s", current_phase, new_phase)
+                return
 
             transition_data = {
                 "initialization_phase": new_phase,
@@ -113,19 +151,25 @@ class FulcrumTrackerStore:
             if new_phase == "incremental":
                 if not self.historical_load_done:
                     _LOGGER.warning("⚠️ Entering incremental mode without historical load!")
+                    if not metadata or not metadata.get("force_transition"):
+                        _LOGGER.error("🛑 Blocked transition to incremental without historical load")
+                        return
                 transition_data["historical_load_done"] = True
             
             elif new_phase == "historical_load":
                 transition_data["historical_load_start"] = dt_now().isoformat()
                 if self.historical_load_done:
                     _LOGGER.warning("⚠️ Restarting historical load - this may cause duplicate data!")
+                    # Reset historical load flag for fresh start
+                    transition_data["historical_load_done"] = False
             
             # Track phase transition history
             phase_history = self._data.get("phase_history", [])
             phase_history.append({
                 "from": current_phase,
                 "to": new_phase,
-                "timestamp": dt_now().isoformat()
+                "timestamp": dt_now().isoformat(),
+                "metadata": metadata
             })
             
             # Keep only last 10 transitions
