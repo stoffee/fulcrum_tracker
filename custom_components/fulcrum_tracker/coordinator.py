@@ -52,20 +52,44 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         self._last_update_time = None
         self._cache = {}
         self._cache_time = None
+
+        # Determine initial phase based on storage state
+        initial_phase = "init"
+        if storage.historical_load_done:
+            _LOGGER.info("♻️ Historical data exists - continuing in incremental mode")
+            initial_phase = "incremental"
+        else:
+            _LOGGER.info("🆕 No historical data found - starting in initial load phase")
+            asyncio.create_task(
+                storage.async_transition_phase("init", {
+                    "reason": "fresh_initialization",
+                    "timestamp": dt_now().isoformat()
+                })
+            )
+
+        # Initialize collection stats with storage data
         self._collection_stats = {
-            "total_sessions": 0,
+            "total_sessions": storage._data.get("total_sessions", 0),
             "new_sessions_today": 0,
-            "last_full_update": None,
+            "last_full_update": storage._data.get("last_update"),
             "update_streak": 0,
-            "current_phase": storage.initialization_phase,
+            "current_phase": initial_phase,
             "refresh_in_progress": False,
             "refresh_start_time": None,
             "last_refresh_completed": None,
             "refresh_duration": 0,
             "refresh_success": None,
-            "refresh_type": None
+            "refresh_type": None,
+            "initialization_status": {
+                "historical_load_done": storage.historical_load_done,
+                "last_setup_time": storage._data.get("last_setup_time"),
+                "total_tracked_sessions": storage._data.get("total_sessions", 0)
+            }
         }
-        _LOGGER.debug("🎮 Coordinator initialized in phase: %s", self._collection_stats["current_phase"])
+
+        _LOGGER.info("🎮 Coordinator initialized in phase: %s (Historical data: %s)", 
+                    initial_phase, 
+                    "exists" if storage.historical_load_done else "needed")
 
     def _format_workout(self, workout: Optional[Dict[str, Any]]) -> str:
         """Format workout details for display."""
@@ -149,69 +173,108 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         """Fetch data from APIs with phase-aware updates."""
         try:
             now = datetime.now(timezone.utc)
+            current_phase = self.storage.initialization_phase
             
             # Track refresh state
-            self._collection_stats["refresh_in_progress"] = True
-            self._collection_stats["refresh_start_time"] = now.isoformat()
-            self._collection_stats["refresh_type"] = "manual" if manual_refresh else "scheduled"
+            self._collection_stats.update({
+                "refresh_in_progress": True,
+                "refresh_start_time": now.isoformat(),
+                "refresh_type": "manual" if manual_refresh else "scheduled",
+                "current_phase": current_phase
+            })
             
-            # Get tomorrow's workout regardless of phase
-            tomorrow_workout = await self.matrix_handler.get_tomorrow_workout()
-            
-            current_phase = self.storage.initialization_phase
-            _LOGGER.debug("🔄 Running update in phase: %s", current_phase)
+            _LOGGER.info("🔄 Starting data update in phase: %s (Manual: %s)", 
+                        current_phase, manual_refresh)
 
+            # Always get tomorrow's workout in parallel
+            workout_task = self.matrix_handler.get_tomorrow_workout()
+            
             if current_phase == "init":
-                # Initial setup - transition to historical load
+                _LOGGER.info("🎬 Beginning initial setup phase")
                 await self.storage.async_transition_phase("historical_load", {
+                    "trigger": "initial_setup",
                     "start_time": now.isoformat()
                 })
                 current_phase = "historical_load"
 
-            if current_phase == "historical_load":
-                _LOGGER.info("📚 Performing historical data load...")
-                # Get full historical data
-                attendance_data = await self.calendar.get_attendance_data()
-                pr_data = await self.pr_handler.get_formatted_prs()
-                calendar_events = await self.google_calendar.get_calendar_events()
-                next_session = await self.google_calendar.get_next_session()
+            # Full historical data load
+            if current_phase == "historical_load" or manual_refresh:
+                _LOGGER.info("📚 Starting full historical data load...")
                 
-                # Process trainer stats
-                trainer_stats = self._process_trainer_stats(calendar_events)
-                
-                if attendance_data and calendar_events:
+                # Create all fetch tasks
+                tasks = {
+                    "attendance": self.calendar.get_attendance_data(),
+                    "prs": self.pr_handler.get_formatted_prs(),
+                    "calendar": self.google_calendar.get_calendar_events(),
+                    "next_session": self.google_calendar.get_next_session(),
+                    "workout": workout_task
+                }
+
+                try:
+                    # Execute all tasks in parallel
+                    results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+                    data = dict(zip(tasks.keys(), results))
+                    
+                    # Check for any exceptions
+                    for key, result in data.items():
+                        if isinstance(result, Exception):
+                            _LOGGER.error("Failed to fetch %s: %s", key, str(result))
+                            raise result
+
+                    attendance_data = data["attendance"]
+                    pr_data = data["prs"]
+                    calendar_events = data["calendar"]
+                    next_session = data["next_session"]
+                    tomorrow_workout = data["workout"]
+
+                    if not attendance_data or not calendar_events:
+                        raise ValueError("Failed to fetch required historical data")
+
+                    # Process trainer statistics
+                    trainer_stats = self._process_trainer_stats(calendar_events)
+                    
+                    # Update total sessions count
                     total_sessions = self._reconcile_sessions(attendance_data, calendar_events)
                     await self.storage.async_update_session_count(total_sessions)
-                    await self.storage.async_transition_phase("incremental", {
-                        "total_sessions": total_sessions,
-                        "completion_time": now.isoformat()
+                    
+                    # Only transition to incremental if this wasn't a manual refresh
+                    if not manual_refresh:
+                        await self.storage.async_transition_phase("incremental", {
+                            "total_sessions": total_sessions,
+                            "completion_time": now.isoformat()
+                        })
+
+                    # Update collection stats
+                    self._collection_stats.update({
+                        "refresh_in_progress": False,
+                        "last_refresh_completed": now.isoformat(),
+                        "refresh_duration": (now - datetime.fromisoformat(
+                            self._collection_stats["refresh_start_time"]
+                        )).total_seconds(),
+                        "refresh_success": True,
+                        "total_items_processed": total_sessions,
+                        "last_update_type": "manual" if manual_refresh else "scheduled"
                     })
 
-                # Update collection stats with completion info
-                self._collection_stats.update({
-                    "refresh_in_progress": False,
-                    "last_refresh_completed": now.isoformat(),
-                    "refresh_duration": (now - datetime.fromisoformat(self._collection_stats["refresh_start_time"])).total_seconds(),
-                    "refresh_success": True,
-                    "total_items_processed": total_sessions,
-                    "last_update_type": "manual" if manual_refresh else "scheduled"
-                })
+                    return {
+                        **trainer_stats,
+                        "zenplanner_fulcrum_sessions": attendance_data.get("total_sessions", 0),
+                        "google_calendar_fulcrum_sessions": len(calendar_events) if calendar_events else 0,
+                        "total_fulcrum_sessions": total_sessions,
+                        "monthly_sessions": attendance_data.get("monthly_sessions", 0),
+                        "last_session": attendance_data.get("last_session"),
+                        "next_session": next_session,
+                        "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
+                        "total_prs": pr_data.get("total_prs", 0),
+                        "prs_by_type": pr_data.get("prs_by_type", {}),
+                        "collection_stats": self._collection_stats,
+                        "tomorrow_workout": self._format_workout(tomorrow_workout),
+                        "tomorrow_workout_details": tomorrow_workout
+                    }
 
-                return {
-                    **trainer_stats,
-                    "zenplanner_fulcrum_sessions": attendance_data.get("total_sessions", 0),
-                    "google_calendar_fulcrum_sessions": len(calendar_events) if calendar_events else 0,
-                    "total_fulcrum_sessions": total_sessions,
-                    "monthly_sessions": attendance_data.get("monthly_sessions", 0),
-                    "last_session": attendance_data.get("last_session"),
-                    "next_session": next_session,
-                    "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
-                    "total_prs": pr_data.get("total_prs", 0),
-                    "prs_by_type": pr_data.get("prs_by_type", {}),
-                    "collection_stats": self._collection_stats,
-                    "tomorrow_workout": self._format_workout(tomorrow_workout),
-                    "tomorrow_workout_details": tomorrow_workout
-                }
+                except Exception as fetch_err:
+                    _LOGGER.error("💥 Historical data fetch failed: %s", str(fetch_err))
+                    raise
 
             else:  # Incremental mode
                 _LOGGER.debug("♻️ Performing incremental update...")
