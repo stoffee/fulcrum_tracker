@@ -292,9 +292,10 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             else:  # Incremental mode
                 _LOGGER.debug("♻️ Performing incremental update...")
                 try:
-                    # Add debug log right at the start
-                    _LOGGER.info("🔍 Starting incremental update with storage sessions: %s", 
-                                self.storage._data.get("total_sessions", 0))
+                    # Get stored sessions count first
+                    stored_sessions = self.storage._data.get("total_sessions", 0)
+                    _LOGGER.info("🔍 Starting incremental update with storage sessions: %s", stored_sessions)
+
                     # Create all incremental tasks
                     tasks = {
                         "next_session": self.google_calendar.get_next_session(),
@@ -305,10 +306,6 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                             end_date=now
                         )
                     }
-
-                    # Add debug before return
-                    _LOGGER.info("📊 Preparing incremental return data with sessions: %s",
-                                self.storage._data.get("total_sessions", 0))
                     
                     # Execute all tasks in parallel
                     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
@@ -325,6 +322,9 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                     pr_data = data["pr_data"]
                     tomorrow_workout = data["workout"]
                     recent_events = data["recent_events"]
+                    
+                    # Initialize trainer_stats
+                    trainer_stats = {}
                     
                     if recent_events:
                         self._collection_stats["new_sessions_today"] = len(recent_events)
@@ -345,12 +345,15 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                         )).total_seconds(),
                         "refresh_success": True,
                         "total_items_processed": len(recent_events) if recent_events else 0,
-                        "last_update_type": "manual" if manual_refresh else "scheduled"
+                        "last_update_type": "manual" if manual_refresh else "scheduled",
+                        "total_sessions": stored_sessions  # Add stored sessions to stats
                     })
 
-                    return {
-                        **(self.data if self.data else {}),
-                        **(trainer_stats if recent_events else {}),
+                    _LOGGER.info("📊 Preparing incremental return data with sessions: %s", stored_sessions)
+
+                    # Create base return data with essential values
+                    return_data = {
+                        "total_fulcrum_sessions": stored_sessions,  # Explicitly include total sessions
                         "next_session": next_session,
                         "recent_prs": pr_data.get("recent_prs", "No recent PRs"),
                         "prs_by_type": pr_data.get("prs_by_type", {}),
@@ -358,6 +361,20 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                         "tomorrow_workout": self._format_workout(tomorrow_workout),
                         "tomorrow_workout_details": tomorrow_workout
                     }
+
+                    # Add trainer stats if we have recent events
+                    if trainer_stats:
+                        return_data.update(trainer_stats)
+
+                    # Add any existing data we want to preserve
+                    if self.data:
+                        for key, value in self.data.items():
+                            if key not in return_data:
+                                return_data[key] = value
+
+                    _LOGGER.info("📊 Final return data contains %s sessions", return_data.get("total_fulcrum_sessions"))
+                    return return_data
+
                 except Exception as fetch_err:
                     _LOGGER.error("💥 Incremental data fetch failed: %s", str(fetch_err))
                     raise
