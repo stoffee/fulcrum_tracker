@@ -43,7 +43,8 @@ class AsyncGoogleCalendarHandler:
         self, 
         calendar_id: Optional[str] = None,
         start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None
+        end_date: Optional[datetime] = None,
+        search_terms: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """Fetch and process calendar events."""
         if await self._is_cache_valid() and not calendar_id:
@@ -72,9 +73,13 @@ class AsyncGoogleCalendarHandler:
             # Base URL constructed once
             url = f"https://www.googleapis.com/calendar/v3/calendars/{encoded_calendar_id}/events"
 
-            for term in CALENDAR_SEARCH_TERMS:
+            # Use provided search terms or fall back to historical terms
+            terms_to_search = search_terms or HISTORICAL_CALENDAR_SEARCH_TERMS
+            _LOGGER.debug("Using search terms: %s", terms_to_search)
+
+            for term in terms_to_search:
                 _LOGGER.debug("Searching calendar %s for term: %s", calendar_id, term)
-                
+
                 params = {
                     "timeMin": start_time_str,
                     "timeMax": end_time_str,

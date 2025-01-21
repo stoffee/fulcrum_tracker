@@ -36,7 +36,7 @@ UPDATE_RETRY_DELAY = 300  # 5 minutes between retry attempts
 UPDATE_MAX_RETRIES = 3
 
 # Calendar Search Terms
-CALENDAR_SEARCH_TERMS = [
+HISTORICAL_CALENDAR_SEARCH_TERMS = [
     "Small Group Personal Training Hawthorne",
     "Small Group Training",
     "Small Group",
@@ -45,6 +45,11 @@ CALENDAR_SEARCH_TERMS = [
     "fix back",
     "fucking back exercise",
     "Do the back muscles"
+]
+
+# New incremental terms
+INCREMENTAL_CALENDAR_SEARCH_TERMS = [
+    "Small Group"
 ]
 
 # trainer names

@@ -13,8 +13,13 @@ from .api.calendar import ZenPlannerCalendar
 from .api.pr import PRHandler
 from .api.google_calendar import AsyncGoogleCalendarHandler
 from .api.the_matrix_calendar import MatrixCalendarHandler
-from .const import SCAN_INTERVAL
 from .storage import FulcrumTrackerStore
+
+from .const import (
+    SCAN_INTERVAL,
+    HISTORICAL_CALENDAR_SEARCH_TERMS,
+    INCREMENTAL_CALENDAR_SEARCH_TERMS
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -310,7 +315,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                     tasks = {
                         "attendance": self.calendar.get_attendance_data(),
                         "prs": self.pr_handler.get_formatted_prs(),
-                        "calendar": self.google_calendar.get_calendar_events(),
+                        "calendar": self.google_calendar.get_calendar_events(search_terms=HISTORICAL_CALENDAR_SEARCH_TERMS),
                         "next_session": self.google_calendar.get_next_session(),
                         "workout": workout_task
                     }
@@ -402,7 +407,8 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                         "workout": workout_task,
                         "recent_events": self.google_calendar.get_calendar_events(
                             start_date=now - timedelta(days=2),
-                            end_date=now
+                            end_date=now,
+                            search_terms=INCREMENTAL_CALENDAR_SEARCH_TERMS
                         )
                     }
                     
