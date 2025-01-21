@@ -8,8 +8,12 @@ from homeassistant.util.dt import now as dt_now
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
-from .const import STORAGE_VERSION, STORAGE_KEY, DOMAIN_STORAGE
-from .const import TRAINERS
+from .const import (
+    STORAGE_VERSION,
+    STORAGE_KEY,
+    DOMAIN_STORAGE,
+    TRAINERS,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,6 +27,7 @@ class FulcrumTrackerStore:
             hass, STORAGE_VERSION, DOMAIN_STORAGE, private=True
         )
         self._data: Dict[str, Any] = {}
+        self._trainer_list = [trainer.lower() for trainer in TRAINERS]
 
     async def async_load(self) -> None:
         """Load stored data."""
@@ -42,7 +47,7 @@ class FulcrumTrackerStore:
                         trainer.lower(): {
                             "total_sessions": 0,
                             "last_update": None
-                        } for trainer in TRAINERS
+                        } for trainer in self._trainer_list
                     }
                 }
                 _LOGGER.info("📦 New installation detected - initializing storage")
@@ -54,7 +59,7 @@ class FulcrumTrackerStore:
                         trainer.lower(): {
                             "total_sessions": 0,
                             "last_update": None
-                        } for trainer in TRAINERS
+                        } for trainer in self._trainer_list
                     }
                 self._data = stored
                 _LOGGER.debug("📋 Loaded existing storage data: %s", 
