@@ -315,6 +315,9 @@ class AsyncGoogleCalendarHandler:
             encoded_calendar_id = quote(self.default_calendar_id, safe='')
             url = f"https://www.googleapis.com/calendar/v3/calendars/{encoded_calendar_id}/events"
 
+            # Use INCREMENTAL_CALENDAR_SEARCH_TERMS for forward-looking queries
+            _LOGGER.debug("🔍 Searching for next session using terms: %s", INCREMENTAL_CALENDAR_SEARCH_TERMS)
+            
             for term in INCREMENTAL_CALENDAR_SEARCH_TERMS:
                 params = {
                     "timeMin": now,
@@ -340,7 +343,7 @@ class AsyncGoogleCalendarHandler:
                         )
                         _LOGGER.debug(
                             "Request details - URL: %s", 
-                            str(response.real_url)
+                            str(response.url)
                         )
                         continue
                             
