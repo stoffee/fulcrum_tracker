@@ -131,7 +131,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             raise
 
     def _process_trainer_stats(self, calendar_events: list[dict[str, Any]]) -> dict[str, Any]:
-        """Process trainer statistics from calendar events."""
+        """Process trainer statistics from calendar events with improved validation and deduplication."""
         _LOGGER.info("Starting trainer stats processing with %d events", len(calendar_events))
         
         # Initialize counters for all trainers
@@ -141,36 +141,110 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         if not calendar_events:
             _LOGGER.warning("No calendar events to process!")
             return trainer_stats
-        
-        # Debug first few events
-        for event in calendar_events[:5]:
-            _LOGGER.debug("Sample event data: %s", {
-                'instructor': event.get('instructor'),
-                'description': event.get('description', '')[:100],
-                'subject': event.get('subject', '')
-            })
-        
-        unmatched_trainers = set()
-        for event in calendar_events:
-            raw_instructor = event.get('instructor', 'Unknown')
-            instructor = raw_instructor.lower()
-            stat_key = f"trainer_{instructor}_sessions"
             
-            if stat_key in trainer_stats:
-                trainer_stats[stat_key] += 1
-                #_LOGGER.debug("Increment session for %s (total: %d)",raw_instructor, trainer_stats[stat_key])
-            else:
-                unmatched_trainers.add(raw_instructor)
-                _LOGGER.warning("Unmatched trainer found: %s", raw_instructor)
+        # Track unique sessions to prevent duplicates
+        processed_sessions = set()
+        unmatched_trainers = set()
+        invalid_events = []
         
-        if unmatched_trainers:
-            _LOGGER.warning("Found unmatched trainers: %s", unmatched_trainers)
+        for event in calendar_events:
+            try:
+                # Create unique session identifier
+                session_id = f"{event.get('date', '')}_{event.get('time', '')}_{event.get('instructor', '')}"
+                
+                # Skip if we've already processed this session
+                if session_id in processed_sessions:
+                    _LOGGER.debug("Skipping duplicate session: %s", session_id)
+                    continue
+                    
+                # Validate event data
+                if not self._validate_event(event):
+                    _LOGGER.warning("Invalid event data: %s", event)
+                    invalid_events.append(event)
+                    continue
+                
+                raw_instructor = event.get('instructor', 'Unknown')
+                instructor = raw_instructor.lower()
+                stat_key = f"trainer_{instructor}_sessions"
+                
+                if stat_key in trainer_stats:
+                    trainer_stats[stat_key] += 1
+                    processed_sessions.add(session_id)
+                else:
+                    unmatched_trainers.add(raw_instructor)
+                    _LOGGER.warning("Unmatched trainer found: %s", raw_instructor)
+                    
+            except Exception as err:
+                _LOGGER.error("Error processing event: %s - Error: %s", event, str(err))
+                continue
         
-        # Log final counts
+        # Log collection statistics
+        collection_stats = {
+            "total_processed": len(processed_sessions),
+            "duplicates_skipped": len(calendar_events) - len(processed_sessions),
+            "invalid_events": len(invalid_events),
+            "unmatched_trainers": list(unmatched_trainers)
+        }
+        _LOGGER.info("Collection statistics: %s", collection_stats)
+        
+        # Log final counts for active trainers
         active_trainers = {k: v for k, v in trainer_stats.items() if v > 0}
         _LOGGER.info("Final trainer session counts: %s", active_trainers)
         
-        return trainer_stats
+        return {
+            **trainer_stats,
+            "collection_stats": collection_stats
+        }
+
+    def _validate_event(self, event: dict) -> bool:
+        """Validate event data for trainer session processing."""
+        required_fields = ['date', 'time', 'instructor']
+        
+        # Check for required fields
+        if not all(field in event for field in required_fields):
+            _LOGGER.debug("Missing required fields in event: %s", event)
+            return False
+            
+        # Validate date format (YYYY-MM-DD)
+        try:
+            date_str = event['date']
+            datetime.strptime(date_str, '%Y-%m-%d')
+        except ValueError:
+            _LOGGER.debug("Invalid date format in event: %s", date_str)
+            return False
+            
+        # Validate time format (HH:MM)
+        try:
+            time_str = event['time']
+            datetime.strptime(time_str, '%H:%M')
+        except ValueError:
+            _LOGGER.debug("Invalid time format in event: %s", time_str)
+            return False
+            
+        # Validate instructor
+        instructor = event['instructor'].lower()
+        if instructor == 'unknown' or not instructor:
+            _LOGGER.debug("Invalid instructor in event: %s", event['instructor'])
+            return False
+            
+        return True
+
+    def _get_session_history(self, calendar_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Process and return session history with trainer information."""
+        session_history = []
+        
+        for event in sorted(calendar_events, key=lambda x: (x['date'], x['time'])):
+            if self._validate_event(event):
+                session_history.append({
+                    'date': event['date'],
+                    'time': event['time'],
+                    'instructor': event['instructor'],
+                    'location': event.get('location', 'Unknown'),
+                    'description': event.get('description', ''),
+                    'processed_at': datetime.now().isoformat()
+                })
+        
+        return session_history
 
     def _reconcile_sessions(self, attendance_data: dict[str, Any], calendar_events: list[dict[str, Any]]) -> int:
         """Reconcile session counts between attendance and calendar data."""
