@@ -93,13 +93,20 @@ class FulcrumTrackerStore:
         """Get current initialization phase."""
         return self._data.get("initialization_phase", "init")
 
-    async def async_mark_historical_load_complete(self) -> None:
+    async def async_mark_historical_load_complete(self, session_count: Optional[int] = None) -> None:
         """Mark historical data load as complete."""
-        _LOGGER.info("📚 Marking historical data load as complete")
-        await self.async_update_data({
+        _LOGGER.info("🎯 Marking historical data load as complete")
+        completion_data = {
             "historical_load_done": True,
-            "initialization_phase": "incremental"
-        })
+            "initialization_phase": "incremental",
+            "completion_timestamp": dt_now().isoformat()
+        }
+        
+        if session_count is not None:
+            _LOGGER.debug("📊 Including session count: %d", session_count)
+            completion_data["total_sessions"] = session_count
+            
+        await self.async_update_data(completion_data)
 
     async def async_update_session_count(self, count: int) -> None:
         """Update total session count."""
