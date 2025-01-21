@@ -202,7 +202,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         
         # Check for required fields
         if not all(field in event for field in required_fields):
-            _LOGGER.debug("Missing required fields in event: %s", event)
+            #_LOGGER.debug("Missing required fields in event: %s", event)
             return False
             
         # Validate date format (YYYY-MM-DD)
@@ -210,7 +210,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             date_str = event['date']
             datetime.strptime(date_str, '%Y-%m-%d')
         except ValueError:
-            _LOGGER.debug("Invalid date format in event: %s", date_str)
+            #_LOGGER.debug("Invalid date format in event: %s", date_str)
             return False
             
         # Validate time format (HH:MM)
@@ -218,13 +218,13 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             time_str = event['time']
             datetime.strptime(time_str, '%H:%M')
         except ValueError:
-            _LOGGER.debug("Invalid time format in event: %s", time_str)
+            #_LOGGER.debug("Invalid time format in event: %s", time_str)
             return False
             
         # Validate instructor
         instructor = event['instructor'].lower()
         if instructor == 'unknown' or not instructor:
-            _LOGGER.debug("Invalid instructor in event: %s", event['instructor'])
+            #_LOGGER.debug("Invalid instructor in event: %s", event['instructor'])
             return False
             
         return True
