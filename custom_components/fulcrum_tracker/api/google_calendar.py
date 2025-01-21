@@ -11,7 +11,8 @@ import jwt
 from aiofiles import open as async_open
 
 from ..const import (
-    CALENDAR_SEARCH_TERMS,
+    HISTORICAL_CALENDAR_SEARCH_TERMS,
+    INCREMENTAL_CALENDAR_SEARCH_TERMS,
     DEFAULT_START_DATE,
     DEFAULT_CACHE_TTL,
     ERROR_CALENDAR_AUTH,
