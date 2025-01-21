@@ -158,8 +158,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             
             if stat_key in trainer_stats:
                 trainer_stats[stat_key] += 1
-                _LOGGER.debug("Increment session for %s (total: %d)", 
-                            raw_instructor, trainer_stats[stat_key])
+                #_LOGGER.debug("Increment session for %s (total: %d)",raw_instructor, trainer_stats[stat_key])
             else:
                 unmatched_trainers.add(raw_instructor)
                 _LOGGER.warning("Unmatched trainer found: %s", raw_instructor)
