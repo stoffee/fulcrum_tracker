@@ -19,9 +19,9 @@ class MatrixCalendarHandler:
         """Get tomorrow's workout details if user is scheduled."""
         try:
             tomorrow = datetime.now() + timedelta(days=1)
-            _LOGGER.debug("Checking workouts for: %s", tomorrow.strftime('%Y-%m-%d'))
+            _LOGGER.debug("Checking Matrix workouts for: %s", tomorrow.strftime('%Y-%m-%d'))
             
-            # Check user schedule
+            # Check user schedule first
             user_session = await self.google_calendar.get_next_session()
             _LOGGER.debug("User session found: %s", user_session)
             
@@ -33,9 +33,20 @@ class MatrixCalendarHandler:
                 _LOGGER.debug("Next session (%s) is not tomorrow", user_session['date'])
                 return None
                 
-            # Get Matrix calendar entry
-            matrix_events = await self._get_matrix_events(tomorrow)
-            #_LOGGER.debug("Matrix events found: %s", matrix_events)
+            # Only search for Matrix-style workout entries (e.g., "HIIT + Core | SGT...")
+            matrix_events = await self.google_calendar.get_calendar_events(
+                calendar_id=self.calendar_id,
+                start_date=tomorrow,
+                end_date=tomorrow + timedelta(days=1)
+            )
+            
+            # Filter for Matrix-style events
+            matrix_events = [
+                event for event in matrix_events 
+                if '|' in event.get('summary', '') and 'MEPs' in event.get('summary', '')
+            ]
+            
+            _LOGGER.debug("Matrix events found: %s", matrix_events)
             
             if not matrix_events:
                 #_LOGGER.debug("No Matrix events found for tomorrow")
