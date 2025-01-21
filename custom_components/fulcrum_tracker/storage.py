@@ -12,18 +12,8 @@ from .const import STORAGE_VERSION, STORAGE_KEY, DOMAIN_STORAGE
 
 _LOGGER = logging.getLogger(__name__)
 
-class PhaseError(Exception):
-    """Phase transition error."""
-
 class FulcrumTrackerStore:
     """Class to handle storage of Fulcrum Tracker state."""
-    
-    VALID_PHASES = ["init", "historical_load", "incremental"]
-    VALID_TRANSITIONS = {
-        "init": ["historical_load"],
-        "historical_load": ["incremental"],
-        "incremental": ["historical_load"]  # Only for manual refresh
-    }
     
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize the storage."""
@@ -32,24 +22,6 @@ class FulcrumTrackerStore:
             hass, STORAGE_VERSION, DOMAIN_STORAGE, private=True
         )
         self._data: Dict[str, Any] = {}
-        self._phase_requirements = {
-            "historical_load": self._validate_historical_requirements,
-            "incremental": self._validate_incremental_requirements
-        }
-
-    async def _validate_historical_requirements(self) -> bool:
-        """Validate requirements for historical load phase."""
-        required_keys = ["total_sessions", "last_update"]
-        has_required = all(key in self._data for key in required_keys)
-        _LOGGER.debug("🔍 Historical requirements check - Has required keys: %s", has_required)
-        return has_required
-
-    async def _validate_incremental_requirements(self) -> bool:
-        """Validate requirements for incremental phase."""
-        if not self._data.get("historical_load_done", False):
-            _LOGGER.error("❌ Cannot enter incremental phase - historical load not complete")
-            return False
-        return True
 
     async def async_load(self) -> None:
         """Load stored data."""
@@ -58,6 +30,7 @@ class FulcrumTrackerStore:
             _LOGGER.debug("🎮 Loading stored state data")
             
             if not stored:
+                # New installation - set initial state
                 self._data = {
                     "initialization_phase": "init",
                     "historical_load_done": False,
@@ -122,10 +95,10 @@ class FulcrumTrackerStore:
 
     async def async_mark_historical_load_complete(self) -> None:
         """Mark historical data load as complete."""
-        _LOGGER.info("🎯 Marking historical data load as complete")
-        await self.async_mark_phase_complete("historical_load", {
-            "completion_type": "normal",
-            "timestamp": dt_now().isoformat()
+        _LOGGER.info("📚 Marking historical data load as complete")
+        await self.async_update_data({
+            "historical_load_done": True,
+            "initialization_phase": "incremental"
         })
 
     async def async_update_session_count(self, count: int) -> None:
@@ -134,6 +107,12 @@ class FulcrumTrackerStore:
         await self.async_update_data({
             "total_sessions": count
         })
+
+    async def async_force_completion(self) -> None:
+        """Force completion of historical load (recovery function)."""
+        _LOGGER.warning("🔧 Forcing historical load completion")
+        current_sessions = self._data.get("total_sessions", 0)
+        await self.async_mark_historical_load_complete(current_sessions)
 
     async def async_record_update(self, timestamp: str) -> None:
         """Record successful update."""
@@ -147,51 +126,23 @@ class FulcrumTrackerStore:
         _LOGGER.warning("🧹 Clearing all stored data")
         self._data = {}
         await self.async_save()
-
-    async def async_validate_phase(self, phase: str) -> bool:
-        """Validate if all requirements are met for a given phase."""
-        validator = self._phase_requirements.get(phase)
-        if not validator:
-            return True  # No specific requirements for this phase
-        return await validator()
-
-    async def async_mark_phase_complete(self, phase: str, metadata: Dict[str, Any]) -> None:
-        """Mark a phase as complete with completion data."""
-        completion_data = {
-            f"{phase}_completion": {
-                "timestamp": dt_now().isoformat(),
-                "metadata": metadata
-            }
-        }
-        
-        if phase == "historical_load":
-            completion_data["historical_load_done"] = True
-            completion_data["initialization_phase"] = "incremental"
-            _LOGGER.info("🎯 Historical load phase marked complete!")
-        
-        await self.async_update_data(completion_data)
-        _LOGGER.info("✨ Phase %s marked complete with metadata: %s", phase, metadata)
-
+    
     async def async_transition_phase(self, new_phase: str, metadata: Optional[Dict[str, Any]] = None) -> None:
-        """Handle phase transitions with validation and completion tracking."""
+        """Handle phase transitions with proper state management."""
         try:
             current_phase = self.initialization_phase
             _LOGGER.info("🔄 Phase transition request: %s -> %s", current_phase, new_phase)
 
-            # Validate phase name
-            if new_phase not in self.VALID_PHASES:
-                raise PhaseError(f"❌ Invalid phase: {new_phase}")
+            # Validate phase transition
+            valid_transitions = {
+                "init": ["historical_load"],
+                "historical_load": ["incremental"],
+                "incremental": ["historical_load"]  # Only allowed for manual refresh
+            }
 
-            # Validate transition
-            if new_phase not in self.VALID_TRANSITIONS.get(current_phase, []):
-                if new_phase == "historical_load" and metadata and metadata.get("force_transition"):
-                    _LOGGER.warning("⚠️ Forcing transition to historical_load")
-                else:
-                    raise PhaseError(f"🚫 Invalid transition: {current_phase} -> {new_phase}")
-
-            # Validate phase requirements
-            if not await self.async_validate_phase(new_phase):
-                raise PhaseError(f"❌ Requirements not met for phase: {new_phase}")
+            if new_phase not in valid_transitions.get(current_phase, []):
+                _LOGGER.error("❌ Invalid phase transition: %s -> %s", current_phase, new_phase)
+                return
 
             transition_data = {
                 "initialization_phase": new_phase,
@@ -233,9 +184,6 @@ class FulcrumTrackerStore:
             await self.async_update_data(transition_data)
             _LOGGER.debug("✅ Phase transition complete: %s", new_phase)
 
-        except PhaseError as phase_err:
-            _LOGGER.error(str(phase_err))
-            raise
         except Exception as err:
             _LOGGER.error("💥 Phase transition failed: %s", str(err))
             raise
@@ -248,7 +196,4 @@ class FulcrumTrackerStore:
     async def async_force_phase(self, phase: str) -> None:
         """Force a specific phase (for debugging/recovery)."""
         _LOGGER.warning("⚠️ Forcing phase transition to: %s", phase)
-        await self.async_transition_phase(phase, {
-            "forced": True,
-            "force_transition": True
-        })
+        await self.async_transition_phase(phase, {"forced": True})

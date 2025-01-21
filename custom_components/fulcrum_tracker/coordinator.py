@@ -272,9 +272,20 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                     
                     # Only transition to incremental if this wasn't a manual refresh
                     if not manual_refresh:
+                        _LOGGER.info("🎯 Completing historical data collection with %d sessions", total_sessions)
+                        
+                        # First mark historical load complete
+                        await self.storage.async_mark_historical_load_complete(total_sessions)
+                        
+                        # Then transition to incremental
                         await self.storage.async_transition_phase("incremental", {
                             "total_sessions": total_sessions,
-                            "completion_time": now.isoformat()
+                            "completion_time": now.isoformat(),
+                            "historical_data": {
+                                "calendar_events": len(calendar_events),
+                                "attendance_total": attendance_data.get("total_sessions", 0),
+                                "completion_status": "success"
+                            }
                         })
 
                     # Update collection stats
