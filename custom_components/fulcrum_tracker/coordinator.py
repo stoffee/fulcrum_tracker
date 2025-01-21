@@ -61,12 +61,6 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             initial_phase = "incremental"
         else:
             _LOGGER.info("🆕 No historical data found - starting in initial load phase")
-            asyncio.create_task(
-                storage.async_transition_phase("init", {
-                    "reason": "fresh_initialization",
-                    "timestamp": dt_now().isoformat()
-                })
-            )
 
         # Initialize collection stats with storage data
         self._collection_stats = {
@@ -267,7 +261,10 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                         raise ValueError("Failed to fetch required historical data")
 
                     # Process trainer statistics
+                    _LOGGER.info("Processing trainer statistics from %d calendar events", len(calendar_events))
                     trainer_stats = self._process_trainer_stats(calendar_events)
+                    _LOGGER.info("Trainer statistics processed with %d active trainers", 
+                                 len([v for v in trainer_stats.values() if v > 0]))
                     
                     # Update total sessions count
                     total_sessions = self._reconcile_sessions(attendance_data, calendar_events)
