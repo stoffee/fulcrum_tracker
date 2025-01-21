@@ -159,7 +159,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                     
                 # Validate event data
                 if not self._validate_event(event):
-                    _LOGGER.warning("Invalid event data: %s", event)
+                    #_LOGGER.warning("Invalid event data: %s", event)
                     invalid_events.append(event)
                     continue
                 

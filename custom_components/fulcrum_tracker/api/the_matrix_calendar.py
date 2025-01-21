@@ -35,10 +35,10 @@ class MatrixCalendarHandler:
                 
             # Get Matrix calendar entry
             matrix_events = await self._get_matrix_events(tomorrow)
-            _LOGGER.debug("Matrix events found: %s", matrix_events)
+            #_LOGGER.debug("Matrix events found: %s", matrix_events)
             
             if not matrix_events:
-                _LOGGER.debug("No Matrix events found for tomorrow")
+                #_LOGGER.debug("No Matrix events found for tomorrow")
                 return None
                 
             workout = self._parse_workout(matrix_events[0])
@@ -81,5 +81,5 @@ class MatrixCalendarHandler:
             'raw_summary': subject  # Changed from event['summary'] to subject
         }
         
-        _LOGGER.debug("Parsed workout data: %s", workout_data)
+        #_LOGGER.debug("Parsed workout data: %s", workout_data)
         return workout_data
