@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .const import STORAGE_VERSION, STORAGE_KEY, DOMAIN_STORAGE
+from .const import TRAINERS
 
 _LOGGER = logging.getLogger(__name__)
 
