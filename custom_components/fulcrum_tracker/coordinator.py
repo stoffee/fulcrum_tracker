@@ -198,35 +198,34 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
 
     def _validate_event(self, event: dict) -> bool:
         """Validate event data for trainer session processing."""
+        if not isinstance(event, dict):
+            return False
+            
         required_fields = ['date', 'time', 'instructor']
         
         # Check for required fields
         if not all(field in event for field in required_fields):
-            #_LOGGER.debug("Missing required fields in event: %s", event)
             return False
-            
+                
         # Validate date format (YYYY-MM-DD)
         try:
             date_str = event['date']
             datetime.strptime(date_str, '%Y-%m-%d')
-        except ValueError:
-            #_LOGGER.debug("Invalid date format in event: %s", date_str)
+        except (ValueError, TypeError):
             return False
-            
+                
         # Validate time format (HH:MM)
         try:
             time_str = event['time']
             datetime.strptime(time_str, '%H:%M')
-        except ValueError:
-            #_LOGGER.debug("Invalid time format in event: %s", time_str)
+        except (ValueError, TypeError):
             return False
-            
+                
         # Validate instructor
-        instructor = event['instructor'].lower()
-        if instructor == 'unknown' or not instructor:
-            #_LOGGER.debug("Invalid instructor in event: %s", event['instructor'])
+        instructor = event.get('instructor', '').lower()
+        if not instructor or instructor == 'unknown':
             return False
-            
+                
         return True
 
     def _get_session_history(self, calendar_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -253,7 +252,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         
         # Add any calendar events not counted in attendance
         if calendar_events:
-            calendar_count = len(calendar_events)
+            calendar_count = len([event for event in calendar_events if isinstance(event, dict)])
             # If attendance data is significantly different, use calendar data
             if abs(total_sessions - calendar_count) > 5:  # Threshold for mismatch
                 _LOGGER.warning(
@@ -262,7 +261,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                     calendar_count
                 )
                 total_sessions = max(total_sessions, calendar_count)
-                
+        
         return total_sessions
 
     async def _async_update_data(self, manual_refresh: bool = False) -> dict[str, Any]:
@@ -277,7 +276,6 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.info("  - Phase: %s", current_phase)
             _LOGGER.info("  - Historical Load Done: %s", self.storage.historical_load_done)
 
-            
             # Track refresh state
             self._collection_stats.update({
                 "refresh_in_progress": True,
@@ -303,17 +301,20 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             # Full historical data load
             if current_phase == "historical_load" or manual_refresh:
                 _LOGGER.info("📚 Starting full historical data load...")
-                
-                # Create all fetch tasks
-                tasks = {
-                    "attendance": self.calendar.get_attendance_data(),
-                    "prs": self.pr_handler.get_formatted_prs(),
-                    "calendar": self.google_calendar.get_calendar_events(),
-                    "next_session": self.google_calendar.get_next_session(),
-                    "workout": workout_task
-                }
+                attendance_data = {}
+                calendar_events = []
+                pr_data = {}
 
                 try:
+                    # Create all fetch tasks
+                    tasks = {
+                        "attendance": self.calendar.get_attendance_data(),
+                        "prs": self.pr_handler.get_formatted_prs(),
+                        "calendar": self.google_calendar.get_calendar_events(),
+                        "next_session": self.google_calendar.get_next_session(),
+                        "workout": workout_task
+                    }
+
                     # Execute all tasks in parallel
                     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
                     data = dict(zip(tasks.keys(), results))
@@ -324,9 +325,9 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                             _LOGGER.error("Failed to fetch %s: %s", key, str(result))
                             raise result
 
-                    attendance_data = data["attendance"]
-                    pr_data = data["prs"]
-                    calendar_events = data["calendar"]
+                    attendance_data = data["attendance"] or {}
+                    pr_data = data["prs"] or {}
+                    calendar_events = data["calendar"] or []
                     next_session = data["next_session"]
                     tomorrow_workout = data["workout"]
 
@@ -334,24 +335,17 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                         raise ValueError("Failed to fetch required historical data")
 
                     # Process trainer statistics
-                    _LOGGER.info("Processing trainer statistics from %d calendar events", len(calendar_events))
                     trainer_stats = self._process_trainer_stats(calendar_events)
-                    _LOGGER.info("Trainer statistics processed with %d active trainers", 
-                                 len([v for v in trainer_stats.values() if v > 0]))
                     
                     # Update total sessions count
                     total_sessions = self._reconcile_sessions(attendance_data, calendar_events)
                     await self.storage.async_update_session_count(total_sessions)
-                    
+
                     # Only transition to incremental if this wasn't a manual refresh
                     if not manual_refresh:
                         _LOGGER.info("🎯 Completing historical data collection with %d sessions", total_sessions)
-                        
-                        # First mark historical load complete
                         await self.storage.async_mark_historical_load_complete(total_sessions)
                         
-                        # Then transition to incremental ONLY if we're not already there
-                        current_phase = self.storage.initialization_phase
                         if current_phase != "incremental":
                             await self.storage.async_transition_phase("incremental", {
                                 "total_sessions": total_sessions,
@@ -371,14 +365,8 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                             self._collection_stats["refresh_start_time"]
                         )).total_seconds(),
                         "refresh_success": True,
-                        "total_items_processed": total_sessions,
-                        "last_update_type": "manual" if manual_refresh else "scheduled"
+                        "total_items_processed": total_sessions
                     })
-
-                    # Before returning, add debug logging
-                    _LOGGER.info("📊 Debug - Return Data:")
-                    _LOGGER.info("  - Total Sessions: %s", total_sessions)
-                    _LOGGER.info("  - Collection Stats: %s", self._collection_stats)
 
                     return {
                         **trainer_stats,
