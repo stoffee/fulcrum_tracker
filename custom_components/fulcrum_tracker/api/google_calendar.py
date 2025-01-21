@@ -190,16 +190,16 @@ class AsyncGoogleCalendarHandler:
     def _normalize_instructor_name(self, description: str) -> str:
         """Normalize instructor name from event description."""
         if not description:
-            #_LOGGER.debug("Empty description - returning Unknown")
+            _LOGGER.debug("Empty description - returning Unknown")
             return "Unknown"
             
         description = description.lower().strip()
-        #_LOGGER.debug("Processing description: %s", description[:100])
+        _LOGGER.debug("Processing description: %s", description[:100])
         
         # First try exact matches in name mappings
         for full_name, normalized_name in TRAINER_NAME_MAPPINGS.items():
             if full_name in description:
-                #_LOGGER.debug("Found exact match: %s -> %s", full_name, normalized_name)
+                _LOGGER.debug("Found exact match: %s -> %s", full_name, normalized_name)
                 return normalized_name
                 
         # Try to extract name after common patterns
