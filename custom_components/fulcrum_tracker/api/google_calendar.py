@@ -166,8 +166,16 @@ class AsyncGoogleCalendarHandler:
             start_time = start_date or datetime.strptime(DEFAULT_START_DATE, "%Y-%m-%d")
             end_time = end_date or datetime.now()
 
+            # Ensure dates are timezone-aware
+            if start_time.tzinfo is None:
+                start_time = start_time.replace(tzinfo=self.local_tz)
+            if end_time.tzinfo is None:
+                end_time = end_time.replace(tzinfo=self.local_tz)
+
             start_time_str = start_time.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
             end_time_str = end_time.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+            _LOGGER.debug("🕒 Fetching calendar data from %s to %s", start_time_str, end_time_str)
 
             if not self.session:
                 self.session = aiohttp.ClientSession()
@@ -181,28 +189,42 @@ class AsyncGoogleCalendarHandler:
                 "timeMax": end_time_str,
                 "singleEvents": "true",
                 "orderBy": "startTime",
-                "maxResults": "2500"
+                "maxResults": "2500",
+                "fields": "items(id,summary,description,start,end,created,creator,updated,location)",  # Explicitly request fields
+                "timeZone": "America/Los_Angeles"  # Force Pacific timezone
             }
 
+            _LOGGER.debug("📡 Making calendar request to %s", url)
+            
             async with self.session.get(url, params=params, headers=headers) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    _LOGGER.error("Calendar API request failed: %s", error_text)
+                    _LOGGER.error("❌ Calendar API request failed: %s", error_text)
                     return []
 
                 data = await response.json()
                 events = data.get("items", [])
+                _LOGGER.debug("📅 Received %d raw events", len(events))
                 
+                # Log first event for debugging
+                if events:
+                    _LOGGER.debug("📝 Sample event: %s", {
+                        'summary': events[0].get('summary'),
+                        'start': events[0].get('start'),
+                        'description': events[0].get('description', '')[:100] + '...' if events[0].get('description') else 'None'
+                    })
+
                 processed_events = []
                 for event in events:
                     processed_event = await self._process_event(event, "")
                     if processed_event:
                         processed_events.append(processed_event)
-
+                        
+                _LOGGER.debug("✨ Processed %d events successfully", len(processed_events))
                 return processed_events
 
         except Exception as err:
-            _LOGGER.error("Failed to fetch calendar data: %s", str(err))
+            _LOGGER.error("💥 Failed to fetch calendar data: %s", str(err))
             return []
 
     async def _load_credentials(self) -> Dict[str, Any]:
