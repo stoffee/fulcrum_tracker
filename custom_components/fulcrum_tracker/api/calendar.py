@@ -38,7 +38,7 @@ class ZenPlannerCalendar:
     async def fetch_month(self, start_date: datetime) -> List[Dict[str, Any]]:
         """Fetch a specific month's data."""
         start_date = self._ensure_timezone(start_date)
-        _LOGGER.debug("Fetching month: %s", start_date.strftime('%B %Y'))
+        #_LOGGER.debug("Fetching month: %s", start_date.strftime('%B %Y'))
         
         url = f"{self.base_url}?&startdate={start_date.strftime('%Y-%m-%d')}"
         current_date = self._ensure_timezone(datetime.now())
