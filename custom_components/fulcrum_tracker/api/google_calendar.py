@@ -340,18 +340,19 @@ class AsyncGoogleCalendarHandler:
                 _LOGGER.debug("Error normalizing timezone: %s", str(e))
                 return None
 
-            instructor = self._normalize_instructor_name(event.get('description', ''))
-
+            # Keep the original summary!
             processed_event = {
                 'date': start_dt.strftime('%Y-%m-%d'),
                 'time': start_dt.strftime('%H:%M'),
-                'subject': event.get('summary', 'Unknown Event'),
-                'instructor': instructor,
+                'subject': event.get('summary', 'Unknown Event'),  # This is the key part!
+                'instructor': self._normalize_instructor_name(event.get('description', '')),
                 'search_term': search_term,
                 'description': event.get('description', ''),
                 'location': event.get('location', ''),
-                'event_id': event.get('id', '')
+                'event_id': event.get('id', ''),
+                'raw_summary': event.get('summary', '')  # Add this to preserve the raw summary
             }
+            _LOGGER.debug("🎯 Processed event: %s", processed_event)  # Add debug logging
             return processed_event
 
         except Exception as err:
