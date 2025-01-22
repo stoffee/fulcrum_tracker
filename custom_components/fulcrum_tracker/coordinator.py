@@ -94,17 +94,30 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
     def _format_workout(self, workout: Optional[Dict[str, Any]]) -> str:
         """Format workout details for display."""
         if not workout:
+            _LOGGER.debug("❌ No workout data available")
             return "No workout scheduled"
         
-        parts = []
-        if workout.get('type'):
-            parts.append(workout['type'])
-        if workout.get('lifts'):
-            parts.append(f"Lifts: {workout['lifts']}")
-        if workout.get('meps'):
-            parts.append(f"MEPs: {workout['meps']}")
+        try:
+            parts = []
+            # Add workout type if present
+            if workout.get('type'):
+                parts.append(f"Type: {workout['type']}")
             
-        return " | ".join(parts) if parts else "Workout details not available"
+            # Add lifts with better formatting
+            if workout.get('lifts'):
+                parts.append(f"Lifts: {workout['lifts']}")
+            
+            # Add MEPs with range formatting
+            if workout.get('meps'):
+                parts.append(f"MEPs Target: {workout['meps']}")
+                
+            formatted = " | ".join(parts)
+            _LOGGER.debug("✨ Formatted workout: %s", formatted)
+            return formatted if parts else "Workout details not available"
+            
+        except Exception as err:
+            _LOGGER.error("💥 Error formatting workout: %s", str(err))
+            return "Error formatting workout"
 
     async def manual_refresh(self) -> None:
         """Handle manual refresh request."""

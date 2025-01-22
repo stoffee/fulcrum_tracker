@@ -365,12 +365,15 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
             workout = data.get("tomorrow_workout_details", {})
             if workout:
                 attrs.update({
-                    "workout_type": workout.get('type'),
-                    "lifts": workout.get('lifts'),
-                    "meps": workout.get('meps'),
-                    "raw_summary": workout.get('raw_summary'),
+                    "workout_type": workout.get('type', 'Unknown'),
+                    "lifts": workout.get('lifts', 'Not specified'),
+                    "meps_target": workout.get('meps', 'Not specified'),
+                    "raw_summary": workout.get('raw_summary', ''),
+                    "created_by": workout.get('created_by', 'Unknown'),
+                    "last_updated": workout.get('last_updated', None),
                     "loading_status": "complete"
                 })
+                _LOGGER.debug("📊 Workout attributes updated: %s", attrs)
 
         # Total sessions attributes
         elif self.entity_description.key == "total_fulcrum_sessions":
