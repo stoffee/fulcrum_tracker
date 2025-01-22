@@ -63,26 +63,26 @@ class MatrixCalendarHandler:
     async def _get_matrix_events(self, target_date: datetime) -> list:
         """Fetch Matrix calendar events."""
         try:
-            _LOGGER.debug("🎯 Fetching Matrix events for: %s", target_date.strftime('%Y-%m-%d'))
+            _LOGGER.debug("🎯 Fetching all Matrix events for: %s", target_date.strftime('%Y-%m-%d'))
             
-            # Fetch ALL events for the target date
+            # Get ALL events for the target date - no search terms!
             events = await self.google_calendar.get_calendar_events(
                 calendar_id=self.calendar_id,
                 start_date=target_date,
-                end_date=target_date + timedelta(days=1),
-                search_terms=None  # No search terms - get all events
+                end_date=target_date + timedelta(days=1)
             )
             
-            # Filter for Matrix workout format
+            # Log what we found
+            _LOGGER.debug("Found %d total events in Matrix calendar", len(events) if events else 0)
+            
+            # Filter locally for Matrix workout format
             matrix_events = []
             for event in events:
                 summary = event.get('summary', '')
                 if '|' in summary and 'MEPs' in summary:
-                    _LOGGER.debug("✅ Found Matrix workout: %s", summary)
+                    _LOGGER.debug("✅ Found valid Matrix workout: %s", summary)
                     matrix_events.append(event)
                 
-            _LOGGER.info("📊 Found %d Matrix workouts for %s", 
-                        len(matrix_events), target_date.strftime('%Y-%m-%d'))
             return matrix_events
             
         except Exception as err:
