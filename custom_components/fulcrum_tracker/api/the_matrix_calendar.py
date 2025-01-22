@@ -85,7 +85,8 @@ class MatrixCalendarHandler:
     def _parse_workout(self, event: Dict[str, Any]) -> Dict[str, Any]:
         """Parse workout details from Matrix calendar event."""
         try:
-            summary = event.get('summary', '')
+            # Get the raw summary text from either subject or raw_summary
+            summary = event.get('subject') or event.get('raw_summary', '')
             _LOGGER.debug("🏋️ Parsing Matrix workout: %s", summary)
 
             # Return early if no summary or invalid format
@@ -107,12 +108,10 @@ class MatrixCalendarHandler:
                 'lifts': parts[1].replace('SGT -', '').strip(),     # e.g. "Row/Pull-up + Deadlift"
                 'display_format': f"{parts[0]} | {parts[1]}",       # The format you want to display
                 'meps': parts[2].replace('MEPs -', '').strip() if len(parts) > 2 else None,
-                'raw_summary': summary,
-                'created_by': event.get('creator', {}).get('email', 'Unknown'),
-                'last_updated': event.get('updated', None)
+                'raw_summary': summary
             }
 
-            _LOGGER.debug("✅ Parsed workout data: %s", workout_data)
+            _LOGGER.debug("💪 Workout data parsed: %s", workout_data)
             return workout_data
 
         except Exception as err:
