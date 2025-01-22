@@ -43,10 +43,10 @@ class MatrixCalendarHandler:
             
             if matrix_events:
                 workout = self._parse_workout(matrix_events[0])
-                _LOGGER.debug("💪 Found workout: %s", workout)
+                #_LOGGER.debug("💪 Found workout: %s", workout)
                 return workout
                 
-            _LOGGER.debug("No Matrix workout found for tomorrow")
+            #_LOGGER.debug("No Matrix workout found for tomorrow")
             return None
                 
         except Exception as err:
@@ -87,11 +87,11 @@ class MatrixCalendarHandler:
         try:
             # Get the raw summary text from either subject or raw_summary
             summary = event.get('subject') or event.get('raw_summary', '')
-            _LOGGER.debug("🏋️ Parsing Matrix workout: %s", summary)
+            #_LOGGER.debug("🏋️ Parsing Matrix workout: %s", summary)
 
             # Return early if no summary or invalid format
             if not summary or '|' not in summary:
-                _LOGGER.warning("⚠️ Invalid workout format: %s", summary)
+               # _LOGGER.warning("⚠️ Invalid workout format: %s", summary)
                 return None
 
             # Split by pipe and clean up whitespace
@@ -111,7 +111,7 @@ class MatrixCalendarHandler:
                 'raw_summary': summary
             }
 
-            _LOGGER.debug("💪 Workout data parsed: %s", workout_data)
+            #_LOGGER.debug("💪 Workout data parsed: %s", workout_data)
             return workout_data
 
         except Exception as err:
