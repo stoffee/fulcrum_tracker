@@ -29,17 +29,17 @@ class MatrixCalendarHandler:
             )
             
             # Add debug logging to see what events we got
-            _LOGGER.debug("📋 Raw events received: %s", [e.get('summary', '') for e in events])
+            _LOGGER.debug("📋 Raw events received: %s", [e.get('subject', '') or e.get('raw_summary', '') for e in events])
             
             # Find the Matrix workout (MEPs format)
             matrix_events = [
                 event for event in events 
-                if event.get('summary', '') and  # Make sure summary exists
-                ('|' in event.get('summary', '')) and 
-                ('MEP' in event.get('summary', '').upper())  # Case-insensitive MEPs check
+                if (event.get('subject') or event.get('raw_summary')) and  # Check both fields
+                ('|' in (event.get('subject', '') or event.get('raw_summary', ''))) and 
+                ('MEP' in (event.get('subject', '') or event.get('raw_summary', '')).upper())
             ]
             
-            _LOGGER.debug("🎯 Found Matrix events: %s", [e.get('summary', '') for e in matrix_events])
+            _LOGGER.debug("🎯 Found Matrix events: %s", [e.get('subject', '') or e.get('raw_summary', '') for e in matrix_events])
             
             if matrix_events:
                 workout = self._parse_workout(matrix_events[0])
