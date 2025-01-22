@@ -86,17 +86,20 @@ class MatrixCalendarHandler:
                 _LOGGER.warning("⚠️ Invalid workout format: %s", summary)
                 return None
 
-            # Split and clean parts
+            # Split by pipe and clean up whitespace
             parts = [part.strip() for part in summary.split('|')]
-            if len(parts) != 3:
-                _LOGGER.warning("⚠️ Wrong number of workout parts: %d", len(parts))
+            
+            # We need at least 2 parts (workout type and SGT portion)
+            if len(parts) < 2:
+                _LOGGER.warning("⚠️ Insufficient workout parts: %d", len(parts))
                 return None
 
-            # Parse individual components
+            # Parse components we care about
             workout_data = {
-                'type': parts[0],                                    # e.g. "HIIT + Core"
-                'lifts': parts[1].replace('SGT -', '').strip(),     # e.g. "Lift of Choice"
-                'meps': parts[2].replace('MEPs -', '').strip(),     # e.g. "140-150"
+                'type': parts[0],                                    # e.g. "Pull Conditioning"
+                'lifts': parts[1].replace('SGT -', '').strip(),     # e.g. "Row/Pull-up + Deadlift"
+                'display_format': f"{parts[0]} | {parts[1]}",       # The format you want to display
+                'meps': parts[2].replace('MEPs -', '').strip() if len(parts) > 2 else None,
                 'raw_summary': summary,
                 'created_by': event.get('creator', {}).get('email', 'Unknown'),
                 'last_updated': event.get('updated', None)

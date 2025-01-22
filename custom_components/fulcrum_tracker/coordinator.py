@@ -98,23 +98,8 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             return "No workout scheduled"
         
         try:
-            parts = []
-            # Add workout type if present
-            if workout.get('type'):
-                parts.append(f"Type: {workout['type']}")
-            
-            # Add lifts with better formatting
-            if workout.get('lifts'):
-                parts.append(f"Lifts: {workout['lifts']}")
-            
-            # Add MEPs with range formatting
-            if workout.get('meps'):
-                parts.append(f"MEPs Target: {workout['meps']}")
+            return workout.get('display_format', 'Workout details not available')
                 
-            formatted = " | ".join(parts)
-            _LOGGER.debug("✨ Formatted workout: %s", formatted)
-            return formatted if parts else "Workout details not available"
-            
         except Exception as err:
             _LOGGER.error("💥 Error formatting workout: %s", str(err))
             return "Error formatting workout"
