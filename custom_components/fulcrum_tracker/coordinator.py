@@ -18,7 +18,8 @@ from .storage import FulcrumTrackerStore
 from .const import (
     SCAN_INTERVAL,
     HISTORICAL_CALENDAR_SEARCH_TERMS,
-    INCREMENTAL_CALENDAR_SEARCH_TERMS
+    INCREMENTAL_CALENDAR_SEARCH_TERMS,
+    DEFAULT_START_DATE
 )
 
 _LOGGER = logging.getLogger(__name__)
