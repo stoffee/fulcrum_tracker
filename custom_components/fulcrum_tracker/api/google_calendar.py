@@ -57,6 +57,17 @@ class AsyncGoogleCalendarHandler:
         encoded_calendar_id = quote(calendar_id, safe='')
         _LOGGER.debug("Fetching events for calendar: %s (encoded: %s)", calendar_id, encoded_calendar_id)
 
+        # Special case for Matrix calendar - skip search terms
+        is_matrix_calendar = "eoe8p4iqvtneb7iffpdps3ddpc@group.calendar.google.com" in calendar_id
+        
+        if is_matrix_calendar:
+            # Just fetch the raw calendar data without search terms
+            return await self._fetch_calendar_data(
+                encoded_calendar_id,
+                start_date,
+                end_date
+            )
+
         start_time = start_date or datetime.strptime(DEFAULT_START_DATE, "%Y-%m-%d")
         end_time = end_date or datetime.now()
 
@@ -143,6 +154,56 @@ class AsyncGoogleCalendarHandler:
                 calendar_id, str(err), exc_info=True
             )
             raise ValueError(ERROR_CALENDAR_FETCH)
+
+    async def _fetch_calendar_data(
+        self,
+        encoded_calendar_id: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> List[Dict[str, Any]]:
+        """Fetch raw calendar data for a specific date range."""
+        try:
+            start_time = start_date or datetime.strptime(DEFAULT_START_DATE, "%Y-%m-%d")
+            end_time = end_date or datetime.now()
+
+            start_time_str = start_time.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            end_time_str = end_time.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+
+            token = await self._get_access_token()
+            headers = {"Authorization": f"Bearer {token}"}
+            url = f"https://www.googleapis.com/calendar/v3/calendars/{encoded_calendar_id}/events"
+
+            params = {
+                "timeMin": start_time_str,
+                "timeMax": end_time_str,
+                "singleEvents": "true",
+                "orderBy": "startTime",
+                "maxResults": "2500"
+            }
+
+            async with self.session.get(url, params=params, headers=headers) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    _LOGGER.error("Calendar API request failed: %s", error_text)
+                    return []
+
+                data = await response.json()
+                events = data.get("items", [])
+                
+                processed_events = []
+                for event in events:
+                    processed_event = await self._process_event(event, "")
+                    if processed_event:
+                        processed_events.append(processed_event)
+
+                return processed_events
+
+        except Exception as err:
+            _LOGGER.error("Failed to fetch calendar data: %s", str(err))
+            return []
 
     async def _load_credentials(self) -> Dict[str, Any]:
         """Load credentials from service account file."""
