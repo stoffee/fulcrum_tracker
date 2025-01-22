@@ -16,48 +16,34 @@ class MatrixCalendarHandler:
         _LOGGER.debug("Matrix Calendar Handler initialized with ID: %s", self.calendar_id)
 
     async def get_tomorrow_workout(self) -> Optional[Dict[str, Any]]:
-        """Get tomorrow's workout details if user is scheduled."""
+        """Get tomorrow's workout from the Matrix calendar."""
         try:
             tomorrow = datetime.now() + timedelta(days=1)
-            _LOGGER.debug("Checking Matrix workouts for: %s", tomorrow.strftime('%Y-%m-%d'))
+            _LOGGER.debug("📅 Fetching Matrix workout for: %s", tomorrow.strftime('%Y-%m-%d'))
             
-            # Check user schedule first
-            user_session = await self.google_calendar.get_next_session()
-            _LOGGER.debug("User session found: %s", user_session)
-            
-            if not user_session:
-                _LOGGER.debug("No user session scheduled")
-                return None
-                
-            if user_session['date'] != tomorrow.strftime('%Y-%m-%d'):
-                _LOGGER.debug("Next session (%s) is not tomorrow", user_session['date'])
-                return None
-                
-            # Only search for Matrix-style workout entries (e.g., "HIIT + Core | SGT...")
-            matrix_events = await self.google_calendar.get_calendar_events(
+            # Get all events for tomorrow from Matrix calendar
+            events = await self.google_calendar.get_calendar_events(
                 calendar_id=self.calendar_id,
                 start_date=tomorrow,
                 end_date=tomorrow + timedelta(days=1)
             )
             
-            # Filter for Matrix-style events
+            # Find the Matrix workout (MEPs format)
             matrix_events = [
-                event for event in matrix_events 
+                event for event in events 
                 if '|' in event.get('summary', '') and 'MEPs' in event.get('summary', '')
             ]
             
-            _LOGGER.debug("Matrix events found: %s", matrix_events)
-            
-            if not matrix_events:
-                #_LOGGER.debug("No Matrix events found for tomorrow")
-                return None
+            if matrix_events:
+                workout = self._parse_workout(matrix_events[0])
+                _LOGGER.debug("💪 Found workout: %s", workout)
+                return workout
                 
-            workout = self._parse_workout(matrix_events[0])
-            _LOGGER.debug("Parsed workout: %s", workout)
-            return workout
+            _LOGGER.debug("No Matrix workout found for tomorrow")
+            return None
             
         except Exception as err:
-            _LOGGER.error("Error fetching Matrix workout: %s", str(err), exc_info=True)
+            _LOGGER.error("❌ Error fetching Matrix workout: %s", str(err))
             return None
             
     async def _get_matrix_events(self, target_date: datetime) -> list:
