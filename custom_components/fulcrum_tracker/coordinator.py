@@ -310,10 +310,15 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
 
                 try:
                     # Create all fetch tasks
+                    _LOGGER.info("🔄 Starting historical data fetch from %s", DEFAULT_START_DATE)
                     tasks = {
                         "attendance": self.calendar.get_attendance_data(),
                         "prs": self.pr_handler.get_formatted_prs(),
-                        "calendar": self.google_calendar.get_calendar_events(search_terms=HISTORICAL_CALENDAR_SEARCH_TERMS),
+                        "calendar": self.google_calendar.get_calendar_events(
+                            start_date=datetime.strptime(DEFAULT_START_DATE, "%Y-%m-%d"),
+                            end_date=datetime.now(timezone.utc),
+                            search_terms=HISTORICAL_CALENDAR_SEARCH_TERMS
+                        ),
                         "next_session": self.google_calendar.get_next_session(),
                         "workout": workout_task
                     }
