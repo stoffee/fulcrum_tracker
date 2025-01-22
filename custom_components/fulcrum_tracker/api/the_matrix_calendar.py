@@ -28,11 +28,18 @@ class MatrixCalendarHandler:
                 end_date=tomorrow + timedelta(days=1)
             )
             
+            # Add debug logging to see what events we got
+            _LOGGER.debug("📋 Raw events received: %s", [e.get('summary', '') for e in events])
+            
             # Find the Matrix workout (MEPs format)
             matrix_events = [
                 event for event in events 
-                if '|' in event.get('summary', '') and 'MEPs' in event.get('summary', '')
+                if event.get('summary', '') and  # Make sure summary exists
+                ('|' in event.get('summary', '')) and 
+                ('MEP' in event.get('summary', '').upper())  # Case-insensitive MEPs check
             ]
+            
+            _LOGGER.debug("🎯 Found Matrix events: %s", [e.get('summary', '') for e in matrix_events])
             
             if matrix_events:
                 workout = self._parse_workout(matrix_events[0])
@@ -41,7 +48,7 @@ class MatrixCalendarHandler:
                 
             _LOGGER.debug("No Matrix workout found for tomorrow")
             return None
-            
+                
         except Exception as err:
             _LOGGER.error("❌ Error fetching Matrix workout: %s", str(err))
             return None
