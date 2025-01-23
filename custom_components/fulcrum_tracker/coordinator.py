@@ -312,6 +312,10 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                 try:
                     # Create all fetch tasks
                     _LOGGER.info("🔄 Starting historical data fetch from %s", DEFAULT_START_DATE)
+                    _LOGGER.info("🔍 Starting calendar fetch with params:")
+                    _LOGGER.info("  - Start date: %s", DEFAULT_START_DATE)
+                    _LOGGER.info("  - Search terms: %s", HISTORICAL_CALENDAR_SEARCH_TERMS)
+                    _LOGGER.info("  - Manual refresh: %s", manual_refresh)
                     tasks = {
                         "attendance": self.calendar.get_attendance_data(),
                         "prs": self.pr_handler.get_formatted_prs(),

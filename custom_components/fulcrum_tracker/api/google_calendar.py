@@ -47,6 +47,12 @@ class AsyncGoogleCalendarHandler:
         end_date: Optional[datetime] = None,
         search_terms: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
+        
+        _LOGGER.info("📅 Calendar fetch request:")
+        _LOGGER.info("  - Calendar ID: %s", calendar_id or self.default_calendar_id)
+        _LOGGER.info("  - Start Date: %s", start_date)
+        _LOGGER.info("  - End Date: %s", end_date)
+        _LOGGER.info("  - Search Terms: %s", search_terms)
         """Fetch and process calendar events."""
         if await self._is_cache_valid() and not calendar_id:
             _LOGGER.debug("Returning cached calendar data")
@@ -366,9 +372,12 @@ class AsyncGoogleCalendarHandler:
     async def _is_cache_valid(self) -> bool:
         """Check if cache is still valid."""
         if not self._cache or not self._cache_time:
+            _LOGGER.debug("🔄 Cache invalid - no data or timestamp")
             return False
         age = datetime.now() - self._cache_time
-        return age.total_seconds() < DEFAULT_CACHE_TTL
+        is_valid = age.total_seconds() < DEFAULT_CACHE_TTL
+        _LOGGER.debug("🕒 Cache age: %d seconds (Valid: %s)", age.total_seconds(), is_valid)
+        return is_valid
 
     @staticmethod
     def _deduplicate_sessions(sessions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
