@@ -45,7 +45,8 @@ class AsyncGoogleCalendarHandler:
         calendar_id: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
-        search_terms: Optional[List[str]] = None
+        search_terms: Optional[List[str]] = None,
+        force_refresh: bool = False
     ) -> List[Dict[str, Any]]:
         
         _LOGGER.info("📅 Calendar fetch request:")
@@ -54,7 +55,7 @@ class AsyncGoogleCalendarHandler:
         _LOGGER.info("  - End Date: %s", end_date)
         _LOGGER.info("  - Search Terms: %s", search_terms)
         """Fetch and process calendar events."""
-        if await self._is_cache_valid() and not calendar_id:
+        if not force_refresh and await self._is_cache_valid() and not calendar_id:
             _LOGGER.debug("Returning cached calendar data")
             return self._cache
 

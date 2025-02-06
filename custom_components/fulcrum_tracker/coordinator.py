@@ -322,7 +322,8 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                         "calendar": self.google_calendar.get_calendar_events(
                             start_date=datetime.strptime(DEFAULT_START_DATE, "%Y-%m-%d"),
                             end_date=datetime.now(timezone.utc),
-                            search_terms=HISTORICAL_CALENDAR_SEARCH_TERMS
+                            search_terms=HISTORICAL_CALENDAR_SEARCH_TERMS,
+                            force_refresh=manual_refresh
                         ),
                         "next_session": self.google_calendar.get_next_session(),
                         "workout": workout_task
