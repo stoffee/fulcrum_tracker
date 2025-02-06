@@ -30,6 +30,11 @@ PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BUTTON]
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Fulcrum Tracker from a config entry."""
     try:
+        # Check if already setup
+        if entry.entry_id in hass.data.get(DOMAIN, {}):
+            _LOGGER.warning("Fulcrum Tracker already setup for this entry, unloading first")
+            await async_unload_entry(hass, entry)
+
         hass.data.setdefault(DOMAIN, {})
         
         # Initialize storage
@@ -293,16 +298,48 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.error("Failed to set up Fulcrum Tracker: %s", str(err))
         raise
 
+async def cleanup_tasks(tasks: set) -> None:
+    """Clean up running tasks."""
+    while tasks:
+        task = tasks.pop()
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception as err:
+                _LOGGER.error("Error canceling task: %s", str(err))
+
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     try:
-        if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-            # Save final state before unloading
+        # Cancel any running tasks first
+        if entry.entry_id in hass.data[DOMAIN]:
             entry_data = hass.data[DOMAIN][entry.entry_id]
-            if "storage" in entry_data:
-                await entry_data["storage"].async_save()
-            hass.data[DOMAIN].pop(entry.entry_id)
+            
+            # Cancel running tasks
+            if "tasks" in entry_data:
+                await cleanup_tasks(entry_data["tasks"])
+            
+            # Shutdown coordinator if it exists
+            if "coordinator" in entry_data:
+                coordinator = entry_data["coordinator"]
+                await coordinator.async_shutdown()
+
+        # Unload platforms
+        unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+        
+        if unload_ok:
+            # Save final state before removing
+            if entry.entry_id in hass.data[DOMAIN]:
+                entry_data = hass.data[DOMAIN][entry.entry_id]
+                if "storage" in entry_data:
+                    await entry_data["storage"].async_save()
+                hass.data[DOMAIN].pop(entry.entry_id)
+            
         return unload_ok
+        
     except Exception as err:
         _LOGGER.error("Error unloading Fulcrum Tracker: %s", str(err))
         return False
