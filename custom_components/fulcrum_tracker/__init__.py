@@ -34,6 +34,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if entry.entry_id in hass.data.get(DOMAIN, {}):
             _LOGGER.warning("Fulcrum Tracker already setup for this entry, unloading first")
             await async_unload_entry(hass, entry)
+            # Remove the entry from hass.data to ensure clean slate
+            hass.data[DOMAIN].pop(entry.entry_id, None)
 
         hass.data.setdefault(DOMAIN, {})
         
@@ -50,8 +52,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "update_failures": 0,
             "tasks": set(),  # Track running tasks
             "storage": storage,  # Add storage handler
+            "platforms_setup": False,  # Track platform setup state
+            "coordinator": None,  # Will store coordinator instance
         }
         hass.data[DOMAIN][entry.entry_id] = entry_data
+        # Set up platforms first before anything else
+        try:
+            if not await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS):
+                _LOGGER.error("Failed to set up platforms")
+                return False
+            entry_data["platforms_setup"] = True
+            _LOGGER.debug("✅ Platforms initialized successfully")
+        except Exception as err:
+            _LOGGER.error("Failed to set up platforms: %s", str(err))
+            await async_unload_entry(hass, entry)
+            raise
         
         async def handle_manual_refresh(call) -> None:
             """Handle the manual refresh service call."""
@@ -314,30 +329,41 @@ async def cleanup_tasks(tasks: set) -> None:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     try:
-        # Cancel any running tasks first
-        if entry.entry_id in hass.data[DOMAIN]:
-            entry_data = hass.data[DOMAIN][entry.entry_id]
-            
-            # Cancel running tasks
-            if "tasks" in entry_data:
-                await cleanup_tasks(entry_data["tasks"])
-            
-            # Shutdown coordinator if it exists
-            if "coordinator" in entry_data:
-                coordinator = entry_data["coordinator"]
+        if entry.entry_id not in hass.data.get(DOMAIN, {}):
+            return True
+
+        entry_data = hass.data[DOMAIN][entry.entry_id]
+        
+        # Cancel all tasks first
+        if "tasks" in entry_data:
+            await cleanup_tasks(entry_data["tasks"])
+        
+        # Shutdown coordinator if it exists
+        if "coordinator" in entry_data and entry_data["coordinator"] is not None:
+            coordinator = entry_data["coordinator"]
+            try:
                 await coordinator.async_shutdown()
+            except Exception as err:
+                _LOGGER.error("Error shutting down coordinator: %s", str(err))
 
         # Unload platforms
-        unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-        
+        try:
+            unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+        except Exception as err:
+            _LOGGER.error("Error unloading platforms: %s", str(err))
+            unload_ok = False
+
+        # Save final state and cleanup
         if unload_ok:
-            # Save final state before removing
-            if entry.entry_id in hass.data[DOMAIN]:
-                entry_data = hass.data[DOMAIN][entry.entry_id]
-                if "storage" in entry_data:
+            if "storage" in entry_data:
+                try:
                     await entry_data["storage"].async_save()
-                hass.data[DOMAIN].pop(entry.entry_id)
+                except Exception as err:
+                    _LOGGER.error("Error saving storage state: %s", str(err))
             
+            # Remove entry data
+            hass.data[DOMAIN].pop(entry.entry_id)
+        
         return unload_ok
         
     except Exception as err:
