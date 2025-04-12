@@ -72,6 +72,7 @@ TRAINERS = [
     "Sydney",
     "Walter",
     "Zei",
+    "Squid",
     "Unknown"
 ]
 

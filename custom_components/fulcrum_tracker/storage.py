@@ -321,11 +321,24 @@ class FulcrumTrackerStore:
             valid_transitions = {
                 "init": ["historical_load"],
                 "historical_load": ["incremental"],
-                "incremental": ["historical_load"]  # Only allowed for manual refresh
+                "incremental": ["historical_load", "incremental"]  # Allow incremental->incremental for refreshes
             }
 
             if new_phase not in valid_transitions.get(current_phase, []):
                 _LOGGER.error("❌ Invalid phase transition: %s -> %s", current_phase, new_phase)
+                return
+
+            # If it's an incremental->incremental transition, treat it as a refresh
+            if current_phase == "incremental" and new_phase == "incremental":
+                _LOGGER.info("♻️ Refreshing incremental phase")
+                transition_data = {
+                    "last_refresh": dt_now().isoformat(),
+                    "previous_refresh": self._data.get("last_refresh")
+                }
+                if metadata:
+                    transition_data.update(metadata)
+                    
+                await self.async_update_data(transition_data)
                 return
 
             transition_data = {
