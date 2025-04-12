@@ -161,7 +161,25 @@ async def async_setup_entry(
     # this line stores the coordinator reference
     hass.data[DOMAIN][config_entry.entry_id]["coordinator"] = coordinator
 
-    await coordinator.async_config_entry_first_refresh()
+    # First load cached data if available
+    if storage.historical_load_done:
+        _LOGGER.info("🔍 Using cached data from storage for initial setup")
+        # Create a background task for delayed refresh (5 minutes later)
+        hass.async_create_task(
+            async_schedule_delayed_refresh(hass, coordinator, timedelta(minutes=5))
+        )
+    else:
+        # Only force refresh for new installations
+        _LOGGER.info("🔄 New installation - performing initial data load")
+        await coordinator.async_config_entry_first_refresh()
+
+    # Add this helper function
+    async def async_schedule_delayed_refresh(hass, coordinator, delay):
+        """Schedule a delayed refresh after startup."""
+        _LOGGER.info("⏰ Scheduling delayed refresh in %s minutes", delay.total_seconds() / 60)
+        await asyncio.sleep(delay.total_seconds())
+        _LOGGER.info("🔄 Performing delayed incremental refresh")
+        await coordinator.async_refresh()
 
     entities = [
         FulcrumSensor(
@@ -303,12 +321,14 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
     def native_value(self) -> StateType:
         """Return the state of the sensor."""
         if self.coordinator.data is None:
+            # Return a valid default for total_fulcrum_sessions
+            if self.entity_description.key == "total_fulcrum_sessions":
+                stored_count = self.coordinator.storage.total_sessions
+                _LOGGER.debug("Using stored session count as default: %s", stored_count)
+                return stored_count or 0
+            
+            # Defaults for other sensors...
             default_state = SensorDefaults.get_loading_state(self.entity_description.key)
-            _LOGGER.debug(
-                "🏗️ Using default state for %s: %s", 
-                self.entity_description.key,
-                default_state["state"]
-            )
             return default_state["state"]
 
         # Add debug logging for total_fulcrum_sessions

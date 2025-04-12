@@ -280,6 +280,56 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.info("  - Phase: %s", current_phase)
             _LOGGER.info("  - Historical Load Done: %s", self.storage.historical_load_done)
 
+            # For very first startup after HA restart, use stored data immediately 
+            if not self.data and self.storage.historical_load_done and not manual_refresh:
+                _LOGGER.info("📊 Fast startup: Using stored data (sessions: %s)", 
+                            self.storage.total_sessions)
+                
+                # Load basic data from storage
+                stored_sessions = self.storage.total_sessions
+                trainer_counts = self.storage.get_all_trainer_sessions()
+                
+                # Create minimal return data using storage
+                basic_data = {
+                    "total_fulcrum_sessions": stored_sessions,
+                    "collection_stats": {
+                        "total_sessions": stored_sessions,
+                        "current_phase": current_phase,
+                        "last_update": self.storage.last_update,
+                        "refresh_in_progress": False,
+                        "fast_startup": True
+                    }
+                }
+                
+                # Add trainer session counts
+                trainer_stats = {f"trainer_{trainer.lower()}_sessions": 0 for trainer in self.TRAINERS}
+                for trainer, count in trainer_counts.items():
+                    key = f"trainer_{trainer}_sessions"
+                    if key in trainer_stats:
+                        trainer_stats[key] = count
+                
+                # Schedule a delayed incremental update (if not already scheduled)
+                if not getattr(self, "_delayed_update_scheduled", False):
+                    self._delayed_update_scheduled = True
+                    
+                    # Define the delayed update function
+                    async def do_delayed_update():
+                        _LOGGER.info("⏰ Running delayed incremental update (5 min after startup)")
+                        await asyncio.sleep(300)  # 5 minutes
+                        try:
+                            _LOGGER.info("🔄 Performing delayed incremental update")
+                            await self.async_refresh()
+                            self._delayed_update_scheduled = False
+                        except Exception as err:
+                            _LOGGER.error("❌ Delayed update failed: %s", str(err))
+                            self._delayed_update_scheduled = False
+                    
+                    # Schedule as background task
+                    asyncio.create_task(do_delayed_update())
+                
+                # Return the quick startup data
+                return {**basic_data, **trainer_stats}
+
             # Track refresh state
             self._collection_stats.update({
                 "refresh_in_progress": True,
