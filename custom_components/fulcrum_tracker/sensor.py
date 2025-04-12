@@ -124,6 +124,14 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
     ),
 )
 
+# Define this helper function outside of async_setup_entry so it's accessible
+async def async_schedule_delayed_refresh(hass, coordinator, delay):
+    """Schedule a delayed refresh after startup."""
+    _LOGGER.info("⏰ Scheduling delayed refresh in %s minutes", delay.total_seconds() / 60)
+    await asyncio.sleep(delay.total_seconds())
+    _LOGGER.info("🔄 Performing delayed incremental refresh")
+    await coordinator.async_refresh()
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -172,14 +180,6 @@ async def async_setup_entry(
         # Only force refresh for new installations
         _LOGGER.info("🔄 New installation - performing initial data load")
         await coordinator.async_config_entry_first_refresh()
-
-    # Add this helper function
-    async def async_schedule_delayed_refresh(hass, coordinator, delay):
-        """Schedule a delayed refresh after startup."""
-        _LOGGER.info("⏰ Scheduling delayed refresh in %s minutes", delay.total_seconds() / 60)
-        await asyncio.sleep(delay.total_seconds())
-        _LOGGER.info("🔄 Performing delayed incremental refresh")
-        await coordinator.async_refresh()
 
     entities = [
         FulcrumSensor(
