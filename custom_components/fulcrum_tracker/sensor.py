@@ -147,8 +147,6 @@ async def async_setup_entry(
     _LOGGER.info("Calendar ID: %s", calendar_id)
     _LOGGER.info("Service account path exists: %s", service_account_path and hass.config.is_allowed_path(service_account_path))
 
-    _LOGGER.debug("Setting up sensors with calendar_id: %s", calendar_id)
-
     # Initialize API handlers
     auth = ZenPlannerAuth(username, password)
     calendar = ZenPlannerCalendar(auth)
@@ -160,7 +158,6 @@ async def async_setup_entry(
     storage = hass.data[DOMAIN][config_entry.entry_id]["storage"]
 
     _LOGGER.info("Storage retrieved with historical load status: %s", storage.historical_load_done)
-
 
     coordinator = FulcrumDataUpdateCoordinator(
         hass=hass,
@@ -190,20 +187,30 @@ async def async_setup_entry(
         _LOGGER.info("🔄 New installation - performing initial data load")
         await coordinator.async_config_entry_first_refresh()
 
-    entities = [
-        FulcrumSensor(
-            coordinator=coordinator,
-            description=description,
-            config_entry=config_entry,
-        )
-        for description in SENSOR_TYPES
-    ]
-
-    async_add_entities(entities)
+    # Create the entities, making sure each one has a unique ID
+    entities = []
+    entity_ids = set()  # Track entity IDs to avoid duplicates
+    
+    for description in SENSOR_TYPES:
+        # Create a unique ID for this entity
+        entity_id = f"{config_entry.entry_id}_{description.key}"
+        
+        # Only add the entity if we haven't seen this ID before
+        if entity_id not in entity_ids:
+            entities.append(
+                FulcrumSensor(
+                    coordinator=coordinator,
+                    description=description,
+                    config_entry=config_entry,
+                )
+            )
+            entity_ids.add(entity_id)
+        else:
+            _LOGGER.warning("Skipping duplicate entity: %s", description.key)
 
     _LOGGER.info("Created %d sensor entities", len(entities))
-
     _LOGGER.info("🔄 Adding %d Fulcrum entities to Home Assistant", len(entities))
+    
     async_add_entities(entities)
     _LOGGER.info("✅ Entities successfully added")
 
