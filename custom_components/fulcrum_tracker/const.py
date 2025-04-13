@@ -95,8 +95,8 @@ TRAINER_NAME_MAPPINGS = {
     "reggie senegal": "Reggie",
     "shelby seaborn": "Shelby",
     "dakayla walters": "Dakayla",
-    "sydney carter": "Squid",
-    "squid carter": "Squid"
+    "sydney carter": "Sydney",  # Keep Sydney as Sydney
+    "squid carter": "Squid"     # Add Squid as Squid
 }
 
 # Exercise Types

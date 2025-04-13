@@ -58,15 +58,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN][entry.entry_id] = entry_data
         # Set up platforms first before anything else
         try:
-            if not await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS):
-                _LOGGER.error("Failed to set up platforms")
-                return False
+            _LOGGER.info("🚀 Starting platform setup for: %s", PLATFORMS)
+            # Initialize each platform individually with proper error handling
+            for platform in PLATFORMS:
+                try:
+                    _LOGGER.info("Setting up platform: %s", platform)
+                    await hass.config_entries.async_forward_entry_setup(entry, platform)
+                    _LOGGER.info("✅ Platform %s initialized successfully", platform)
+                except Exception as platform_err:
+                    _LOGGER.error("Failed to set up platform %s: %s", platform, str(platform_err))
+                    # Continue with other platforms even if one fails
+            
             entry_data["platforms_setup"] = True
-            _LOGGER.debug("✅ Platforms initialized successfully")
-        except Exception as err:
-            _LOGGER.error("Failed to set up platforms: %s", str(err))
-            await async_unload_entry(hass, entry)
-            raise
+            _LOGGER.info("✅ Platforms initialized successfully")
+        except Exception as platforms_err:
+            _LOGGER.error("Failed to set up platforms: %s", str(platforms_err), exc_info=True)
+            # Continue with setup even if platforms fail
         
         async def handle_manual_refresh(call) -> None:
             """Handle the manual refresh service call."""

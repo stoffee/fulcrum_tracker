@@ -143,6 +143,10 @@ async def async_setup_entry(
     calendar_id = config_entry.data[CONF_CALENDAR_ID]
     service_account_path = config_entry.data[CONF_SERVICE_ACCOUNT_PATH]
 
+    _LOGGER.info("Starting setup of Fulcrum Tracker sensors with user: %s", username)
+    _LOGGER.info("Calendar ID: %s", calendar_id)
+    _LOGGER.info("Service account path exists: %s", service_account_path and hass.config.is_allowed_path(service_account_path))
+
     _LOGGER.debug("Setting up sensors with calendar_id: %s", calendar_id)
 
     # Initialize API handlers
@@ -154,6 +158,9 @@ async def async_setup_entry(
     
     # Get storage from domain data
     storage = hass.data[DOMAIN][config_entry.entry_id]["storage"]
+
+    _LOGGER.info("Storage retrieved with historical load status: %s", storage.historical_load_done)
+
 
     coordinator = FulcrumDataUpdateCoordinator(
         hass=hass,
@@ -168,6 +175,8 @@ async def async_setup_entry(
 
     # this line stores the coordinator reference
     hass.data[DOMAIN][config_entry.entry_id]["coordinator"] = coordinator
+
+    _LOGGER.info("Coordinator created successfully")
 
     # First load cached data if available
     if storage.historical_load_done:
@@ -191,6 +200,8 @@ async def async_setup_entry(
     ]
 
     async_add_entities(entities)
+
+    _LOGGER.info("Created %d sensor entities", len(entities))
 
 class SensorDefaults:
     """Handle default values for all sensor types."""
