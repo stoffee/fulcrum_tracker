@@ -56,24 +56,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "coordinator": None,  # Will store coordinator instance
         }
         hass.data[DOMAIN][entry.entry_id] = entry_data
+        
         # Set up platforms first before anything else
         try:
             _LOGGER.info("🚀 Starting platform setup for: %s", PLATFORMS)
-            # Initialize each platform individually with proper error handling
-            for platform in PLATFORMS:
-                try:
-                    _LOGGER.info("Setting up platform: %s", platform)
-                    await hass.config_entries.async_forward_entry_setups(entry, platform)
-                    _LOGGER.info("✅ Platform %s initialized successfully", platform)
-                except Exception as platform_err:
-                    _LOGGER.error("Failed to set up platform %s: %s", platform, str(platform_err))
-                    # Continue with other platforms even if one fails
-            
+            # The correct way to set up all platforms at once
+            setup_success = await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+            _LOGGER.info("Platform setup result: %s", setup_success)
+            if not setup_success:
+                _LOGGER.error("Failed to set up platforms")
+                return False
+            if not await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS):
+                _LOGGER.error("Failed to set up platforms")
+                return False
             entry_data["platforms_setup"] = True
-            _LOGGER.info("✅ Platforms initialized successfully")
-        except Exception as platforms_err:
-            _LOGGER.error("Failed to set up platforms: %s", str(platforms_err), exc_info=True)
-            # Continue with setup even if platforms fail
+            _LOGGER.debug("✅ Platforms initialized successfully")
+        except Exception as err:
+            _LOGGER.error("Failed to set up platforms: %s", str(err))
+            await async_unload_entry(hass, entry)
+            raise
         
         async def handle_manual_refresh(call) -> None:
             """Handle the manual refresh service call."""
