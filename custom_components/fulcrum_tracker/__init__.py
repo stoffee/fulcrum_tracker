@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from homeassistant.const import Platform
@@ -60,11 +60,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Set up platforms first before anything else
         try:
             _LOGGER.info("🚀 Starting platform setup for: %s", PLATFORMS)
-            # Only try to set up platforms once
-            setup_success = await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-            _LOGGER.info("Platform setup result: %s", setup_success)
-            
-            if not setup_success:
+            # Only set up platforms once
+            if not await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS):
                 _LOGGER.error("Failed to set up platforms")
                 return False
                 
@@ -270,10 +267,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 })
 
                 _LOGGER.info("✨ Fulcrum Tracker setup completed in %s phase", storage.initialization_phase)
-
             except Exception as err:
                 _LOGGER.error("💥 Error in delayed setup: %s", str(err))
-                raise
+            finally:
+                # Ensure this task is removed from tracking when done
+                if "tasks" in entry_data and asyncio.current_task() in entry_data["tasks"]:
+                    entry_data["tasks"].remove(asyncio.current_task())
 
         async def cleanup_tasks() -> None:
             """Clean up running tasks."""
@@ -302,15 +301,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Register shutdown handler
         hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, handle_shutdown)
         
-        # First set up the platforms
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-        if not await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS):
-            return False
-        entry_data = hass.data[DOMAIN][entry.entry_id]
-        entry_data["platforms_setup"] = True
-        _LOGGER.debug("✅ Platforms initialized")
-        
-        # Then start initial setup and track the task
+        # Start initial setup and track the task
         setup_task = hass.async_create_task(delayed_setup())
         entry_data["tasks"].add(setup_task)
         

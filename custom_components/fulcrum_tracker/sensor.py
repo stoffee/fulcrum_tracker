@@ -125,12 +125,21 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
 )
 
 # Define this helper function outside of async_setup_entry so it's accessible
-async def async_schedule_delayed_refresh(hass, coordinator, delay):
-    """Schedule a delayed refresh after startup."""
+def async_schedule_delayed_refresh(hass, coordinator, delay):
+    """Schedule a delayed refresh after startup without blocking."""
     _LOGGER.info("⏰ Scheduling delayed refresh in %s minutes", delay.total_seconds() / 60)
-    await asyncio.sleep(delay.total_seconds())
-    _LOGGER.info("🔄 Performing delayed incremental refresh")
-    await coordinator.async_refresh()
+    
+    async def _delayed_refresh():
+        try:
+            await asyncio.sleep(delay.total_seconds())
+            _LOGGER.info("🔄 Performing delayed incremental refresh")
+            await coordinator.async_refresh()
+        except Exception as err:
+            _LOGGER.error("❌ Delayed refresh task failed: %s", str(err))
+    
+    # Create task but don't await it
+    task = hass.async_create_task(_delayed_refresh())
+    return task
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -178,10 +187,8 @@ async def async_setup_entry(
     # First load cached data if available
     if storage.historical_load_done:
         _LOGGER.info("🔍 Using cached data from storage for initial setup")
-        # Create a background task for delayed refresh (5 minutes later)
-        hass.async_create_task(
-            async_schedule_delayed_refresh(hass, coordinator, timedelta(minutes=5))
-        )
+        # Schedule the delayed refresh without awaiting it
+        async_schedule_delayed_refresh(hass, coordinator, timedelta(minutes=5))
     else:
         # Only force refresh for new installations
         _LOGGER.info("🔄 New installation - performing initial data load")
