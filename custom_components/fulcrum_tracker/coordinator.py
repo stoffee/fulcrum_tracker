@@ -270,6 +270,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self, manual_refresh: bool = False) -> dict[str, Any]:
         """Fetch data from APIs with phase-aware updates."""
+        _LOGGER.info("🔄 Starting data update for Fulcrum Tracker")
         try:
             now = datetime.now(timezone.utc)
             current_phase = self.storage.initialization_phase

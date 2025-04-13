@@ -64,6 +64,9 @@ class FulcrumTrackerStore:
                 self._data = stored
                 _LOGGER.debug("📋 Loaded existing storage data: %s", 
                             {k: v for k, v in self._data.items() if k != "credentials"})
+                _LOGGER.info("📂 Loaded existing storage data with %d sessions", 
+                stored.get("total_sessions", 0))
+
         except Exception as err:
             _LOGGER.error("💥 Failed to load stored data: %s", str(err))
             self._data = {}

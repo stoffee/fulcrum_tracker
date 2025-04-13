@@ -203,6 +203,10 @@ async def async_setup_entry(
 
     _LOGGER.info("Created %d sensor entities", len(entities))
 
+    _LOGGER.info("🔄 Adding %d Fulcrum entities to Home Assistant", len(entities))
+    async_add_entities(entities)
+    _LOGGER.info("✅ Entities successfully added")
+
 class SensorDefaults:
     """Handle default values for all sensor types."""
 
@@ -331,7 +335,9 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self) -> StateType:
         """Return the state of the sensor."""
+        _LOGGER.debug("🔍 Getting native_value for %s", self.entity_description.key)
         if self.coordinator.data is None:
+            _LOGGER.debug("⚠️ Coordinator data is None for %s", self.entity_description.key)
             # Return a valid default for total_fulcrum_sessions
             if self.entity_description.key == "total_fulcrum_sessions":
                 stored_count = self.coordinator.storage.total_sessions
