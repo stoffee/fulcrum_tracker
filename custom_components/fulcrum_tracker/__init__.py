@@ -60,23 +60,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Set up platforms first before anything else
         try:
             _LOGGER.info("🚀 Starting platform setup for: %s", PLATFORMS)
-            
-            # Setup each platform individually with better error handling
-            setup_success = True
-            for platform in PLATFORMS:
-                try:
-                    _LOGGER.info(f"Setting up platform: {platform}")
-                    result = await hass.config_entries.async_forward_entry_setup(entry, platform)
-                    if not result:
-                        _LOGGER.error(f"Failed to set up platform: {platform}")
-                        setup_success = False
-                except Exception as platform_err:
-                    _LOGGER.error(f"Error setting up platform {platform}: {str(platform_err)}")
-                    setup_success = False
-            
-            if not setup_success:
-                _LOGGER.error("One or more platforms failed to set up")
-                await async_unload_entry(hass, entry)
+            # Only set up platforms once
+            # FIX: Use async_forward_entry_setups instead of async_forward_entry_setup
+            if not await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS):
+                _LOGGER.error("Failed to set up platforms")
                 return False
                 
             entry_data["platforms_setup"] = True
@@ -360,6 +347,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Unload platforms
         try:
+            # FIX: Use async_unload_platforms instead of async_unload_platforms
             unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
         except Exception as err:
             _LOGGER.error("Error unloading platforms: %s", str(err))
