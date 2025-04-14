@@ -156,28 +156,32 @@ async def async_setup_entry(
     _LOGGER.info("Calendar ID: %s", calendar_id)
     _LOGGER.info("Service account path exists: %s", service_account_path and hass.config.is_allowed_path(service_account_path))
 
-    # Initialize API handlers
-    auth = ZenPlannerAuth(username, password)
-    calendar = ZenPlannerCalendar(auth)
-    pr_handler = PRHandler(auth, DEFAULT_USER_ID)
-    google_calendar = AsyncGoogleCalendarHandler(service_account_path, calendar_id)
-    matrix_handler = MatrixCalendarHandler(google_calendar)
-    
-    # Get storage from domain data
-    storage = hass.data[DOMAIN][config_entry.entry_id]["storage"]
+    try:
+        # Initialize API handlers
+        auth = ZenPlannerAuth(username, password)
+        calendar = ZenPlannerCalendar(auth)
+        pr_handler = PRHandler(auth, DEFAULT_USER_ID)
+        google_calendar = AsyncGoogleCalendarHandler(service_account_path, calendar_id)
+        matrix_handler = MatrixCalendarHandler(google_calendar)
+        
+        # Get storage from domain data
+        storage = hass.data[DOMAIN][config_entry.entry_id]["storage"]
 
-    _LOGGER.info("Storage retrieved with historical load status: %s", storage.historical_load_done)
+        _LOGGER.info("Storage retrieved with historical load status: %s", storage.historical_load_done)
 
-    coordinator = FulcrumDataUpdateCoordinator(
-        hass=hass,
-        logger=_LOGGER,
-        name="fulcrum_tracker",
-        calendar=calendar,
-        pr_handler=pr_handler,
-        google_calendar=google_calendar,
-        matrix_handler=matrix_handler,
-        storage=storage,
-    )
+        coordinator = FulcrumDataUpdateCoordinator(
+            hass=hass,
+            logger=_LOGGER,
+            name="fulcrum_tracker",
+            calendar=calendar,
+            pr_handler=pr_handler,
+            google_calendar=google_calendar,
+            matrix_handler=matrix_handler,
+            storage=storage,
+        )
+    except Exception as err:
+        _LOGGER.error("Failed to initialize API handlers: %s", str(err))
+        raise
 
     # this line stores the coordinator reference
     hass.data[DOMAIN][config_entry.entry_id]["coordinator"] = coordinator
@@ -191,35 +195,44 @@ async def async_setup_entry(
         async_schedule_delayed_refresh(hass, coordinator, timedelta(minutes=5))
     else:
         # Only force refresh for new installations
-        _LOGGER.info("🔄 New installation - performing initial data load")
-        await coordinator.async_config_entry_first_refresh()
+        try:
+            _LOGGER.info("🔄 New installation - performing initial data load")
+            await coordinator.async_config_entry_first_refresh()
+        except Exception as err:
+            _LOGGER.error("Failed to perform initial data load: %s", str(err))
+            # Even if refresh fails, we still set up the entities with default values
 
-    # Create the entities, making sure each one has a unique ID
-    entities = []
-    entity_ids = set()  # Track entity IDs to avoid duplicates
-    
-    for description in SENSOR_TYPES:
-        # Create a unique ID for this entity
-        entity_id = f"{config_entry.entry_id}_{description.key}"
+    try:
+        # Create the entities, making sure each one has a unique ID
+        entities = []
+        entity_ids = set()  # Track entity IDs to avoid duplicates
         
-        # Only add the entity if we haven't seen this ID before
-        if entity_id not in entity_ids:
-            entities.append(
-                FulcrumSensor(
-                    coordinator=coordinator,
-                    description=description,
-                    config_entry=config_entry,
+        for description in SENSOR_TYPES:
+            # Create a unique ID for this entity
+            entity_id = f"{config_entry.entry_id}_{description.key}"
+            
+            # Only add the entity if we haven't seen this ID before
+            if entity_id not in entity_ids:
+                entities.append(
+                    FulcrumSensor(
+                        coordinator=coordinator,
+                        description=description,
+                        config_entry=config_entry,
+                    )
                 )
-            )
-            entity_ids.add(entity_id)
-        else:
-            _LOGGER.warning("Skipping duplicate entity: %s", description.key)
+                entity_ids.add(entity_id)
+            else:
+                _LOGGER.warning("Skipping duplicate entity: %s", description.key)
 
-    _LOGGER.info("Created %d sensor entities", len(entities))
-    _LOGGER.info("🔄 Adding %d Fulcrum entities to Home Assistant", len(entities))
-    
-    async_add_entities(entities)
-    _LOGGER.info("✅ Entities successfully added")
+        _LOGGER.info("Created %d sensor entities", len(entities))
+        _LOGGER.info("🔄 Adding %d Fulcrum entities to Home Assistant", len(entities))
+        
+        # Ensure entities are always added, even if there were earlier errors
+        async_add_entities(entities)
+        _LOGGER.info("✅ Entities successfully added")
+    except Exception as err:
+        _LOGGER.error("Error creating entities: %s", str(err))
+        raise
 
 class SensorDefaults:
     """Handle default values for all sensor types."""

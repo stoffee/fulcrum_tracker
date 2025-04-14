@@ -134,6 +134,33 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
             })
             raise
 
+    async def async_shutdown(self) -> None:
+        """Shutdown the coordinator."""
+        _LOGGER.info("🛑 Shutting down coordinator")
+        
+        try:
+            # Close API handlers
+            if hasattr(self, 'calendar') and hasattr(self.calendar, 'auth'):
+                await self.calendar.auth.close()
+                
+            if hasattr(self, 'google_calendar'):
+                await self.google_calendar.close()
+                
+            # Save final state to storage
+            if hasattr(self, 'storage'):
+                await self.storage.async_save()
+                
+            # Update shutdown status
+            self._collection_stats.update({
+                "refresh_in_progress": False,
+                "shutdown_time": datetime.now(timezone.utc).isoformat()
+            })
+            
+            _LOGGER.info("✅ Coordinator shutdown complete")
+            
+        except Exception as err:
+            _LOGGER.error("💥 Error during coordinator shutdown: %s", str(err))
+
     def _process_trainer_stats(self, calendar_events: list[dict[str, Any]]) -> dict[str, Any]:
         """Process trainer statistics from calendar events with improved validation and deduplication."""
         _LOGGER.info("Starting trainer stats processing with %d events", len(calendar_events))
