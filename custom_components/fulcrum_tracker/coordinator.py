@@ -93,17 +93,30 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
                     "exists" if storage.historical_load_done else "needed")
 
     def _format_workout(self, workout: Optional[Dict[str, Any]]) -> str:
-        """Format workout details for display."""
+        """Format workout details for display with improved error handling."""
         if not workout:
             _LOGGER.debug("❌ No workout data available")
             return "No workout scheduled"
         
         try:
-            return workout.get('display_format', 'Workout details not available')
+            # Get the raw format
+            display_format = workout.get('display_format', '')
+            
+            # Check if the workout has a pipe separator
+            if display_format and '|' in display_format:
+                return display_format
+                
+            # If no pipe separator or no display_format, create one from parts
+            workout_type = workout.get('type', 'Unknown')
+            lifts = workout.get('lifts', 'Not specified')
+            
+            # Make sure we return with a pipe separator for template compatibility
+            return f"{workout_type} | {lifts}"
                 
         except Exception as err:
             _LOGGER.error("💥 Error formatting workout: %s", str(err))
-            return "Error formatting workout"
+            # Return a template-compatible format even on error
+            return "Unknown | Unknown"
 
     async def manual_refresh(self) -> None:
         """Handle manual refresh request."""

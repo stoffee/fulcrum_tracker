@@ -70,9 +70,10 @@ TRAINERS = [
     "Shelby",
     "Sonia",
     "Sydney",
-    "Walter",
+    "Walt",
     "Zei",
     "Squid",
+    "RJ",
     "Unknown"
 ]
 
@@ -82,7 +83,7 @@ TRAINER_NAME_MAPPINGS = {
     "cate wade": "Cate",
     "emma peel": "Emma",
     "emma krnacik": "Emma",
-    "walter frazier": "Walter",
+    "walter frazier": "Walt",
     "curtis reynolds": "Curtis",
     "shane tidrick": "Shane",
     "cheryl chen": "Cheryl",
@@ -95,8 +96,9 @@ TRAINER_NAME_MAPPINGS = {
     "reggie senegal": "Reggie",
     "shelby seaborn": "Shelby",
     "dakayla walters": "Dakayla",
-    "sydney carter": "Sydney",  # Keep Sydney as Sydney
-    "squid carter": "Squid"     # Add Squid as Squid
+    "sydney carter": "Sydney",
+    "squid carter": "Squid",
+    "rj brunoff": "RJ"     
 }
 
 # Exercise Types

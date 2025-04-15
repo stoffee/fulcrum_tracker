@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
@@ -121,6 +122,26 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         key="tomorrow_workout",
         name="Tomorrow's Workout",
         icon="mdi:dumbbell",
+    ),
+    # Cost Analysis Sensors
+    SensorEntityDescription(
+        key="training_tco",
+        name="Total Training Cost",
+        icon="mdi:cash",
+        native_unit_of_measurement="$",
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SensorEntityDescription(
+        key="training_cost_per_class",
+        name="Cost Per Class",
+        icon="mdi:calculator",
+        native_unit_of_measurement="$/class",
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SensorEntityDescription(
+        key="training_session_metrics",
+        name="Training Session Metrics",
+        icon="mdi:clipboard-text-clock",
     ),
 )
 
@@ -321,6 +342,19 @@ class SensorDefaults:
                     "meps": "Loading...",
                     "loading_status": "initializing"
                 }
+            },
+            # Add defaults for cost sensors
+            "training_tco": {
+                "state": 0,
+                "attributes": {"loading_status": "initializing"}
+            },
+            "training_cost_per_class": {
+                "state": 0,
+                "attributes": {"loading_status": "initializing"}
+            },
+            "training_session_metrics": {
+                "state": "{}",
+                "attributes": {"loading_status": "initializing"}
             }
         }
         
@@ -392,6 +426,58 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
         if self.entity_description.key == "next_session" and self.coordinator.data.get("next_session"):
             next_session = self.coordinator.data["next_session"]
             return f"{next_session['date']} {next_session['time']} with {next_session['instructor']}"
+
+        # Handle cost analysis sensors
+        if self.entity_description.key == "training_tco":
+            # Fixed payment data
+            payments = [
+                (1892.10, datetime(2023, 4, 4).timestamp()),
+                (1892.10, datetime(2022, 7, 7).timestamp()),
+                (96.00, datetime(2021, 11, 8).timestamp())
+            ]
+            return round(sum(payment[0] for payment in payments), 2)
+            
+        elif self.entity_description.key == "training_cost_per_class":
+            try:
+                start_date = datetime(2023, 9, 15).timestamp()
+                sessions = self.coordinator.data.get("total_fulcrum_sessions", 0)
+                
+                if not sessions or sessions == 0:
+                    return 0
+                    
+                monthly_cost = 315.35
+                months_active = round((datetime.now().timestamp() - start_date) / (60*60*24*30), 1)
+                total_cost = monthly_cost * months_active
+                
+                return round(total_cost / sessions, 2)
+            except Exception as err:
+                _LOGGER.error("Error calculating cost per class: %s", str(err))
+                return 0
+                
+        elif self.entity_description.key == "training_session_metrics":
+            # Return JSON data that can be parsed in templates
+            try:
+                start_date = datetime(2023, 9, 15).timestamp()
+                sessions_attended = self.coordinator.data.get("total_fulcrum_sessions", 0)
+                monthly_cost = 315.35
+                months_active = round((datetime.now().timestamp() - start_date) / (60*60*24*30), 1)
+                total_cost = monthly_cost * months_active
+                actual_cost = total_cost / sessions_attended if sessions_attended > 0 else 0
+                
+                return json.dumps({
+                    "sessions_attended": sessions_attended,
+                    "months_active": months_active,
+                    "total_cost": round(total_cost, 2),
+                    "actual_cost": round(actual_cost, 2)
+                })
+            except Exception as err:
+                _LOGGER.error("Error calculating training metrics: %s", str(err))
+                return json.dumps({
+                    "sessions_attended": 0,
+                    "months_active": 0,
+                    "total_cost": 0,
+                    "actual_cost": 0
+                })
             
         value = self.coordinator.data.get(self.entity_description.key)
         if value is None:
@@ -479,5 +565,57 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                     "total_sessions": data[f"trainer_{trainer_name}_sessions"],
                     "loading_status": "complete"
                 })
+                
+        # Cost analysis attributes
+        elif self.entity_description.key == "training_tco":
+            # Add cost analysis attributes
+            attrs.update({
+                "payments": [
+                    {"amount": 1892.10, "date": "2023-04-04"},
+                    {"amount": 1892.10, "date": "2022-07-07"},
+                    {"amount": 96.00, "date": "2021-11-08"}
+                ],
+                "loading_status": "complete"
+            })
+            
+        elif self.entity_description.key == "training_cost_per_class":
+            try:
+                start_date = datetime(2023, 9, 15)
+                sessions = self.coordinator.data.get("total_fulcrum_sessions", 0)
+                monthly_cost = 315.35
+                months_active = round((datetime.now().timestamp() - start_date.timestamp()) / (60*60*24*30), 1)
+                total_cost = monthly_cost * months_active
+                
+                attrs.update({
+                    "start_date": "2023-09-15",
+                    "monthly_cost": monthly_cost,
+                    "months_active": months_active,
+                    "total_cost": round(total_cost, 2),
+                    "total_sessions": sessions,
+                    "loading_status": "complete"
+                })
+            except Exception as err:
+                _LOGGER.error("Error calculating cost attributes: %s", str(err))
+                
+        elif self.entity_description.key == "training_session_metrics":
+            # Include raw data for debugging
+            try:
+                start_date = datetime(2023, 9, 15).timestamp()
+                sessions_attended = self.coordinator.data.get("total_fulcrum_sessions", 0)
+                monthly_cost = 315.35
+                months_active = round((datetime.now().timestamp() - start_date) / (60*60*24*30), 1)
+                total_cost = monthly_cost * months_active
+                
+                attrs.update({
+                    "sessions_attended": sessions_attended,
+                    "months_active": months_active,
+                    "total_cost": round(total_cost, 2),
+                    "actual_cost": round(total_cost / sessions_attended, 2) if sessions_attended > 0 else 0,
+                    "monthly_cost": monthly_cost,
+                    "start_date": "2023-09-15",
+                    "loading_status": "complete"
+                })
+            except Exception as err:
+                _LOGGER.error("Error calculating metrics attributes: %s", str(err))
 
         return attrs
