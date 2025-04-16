@@ -62,14 +62,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.info("🚀 Starting platform setup for: %s", PLATFORMS)
             # Only set up platforms once
             # FIX: Use async_forward_entry_setups instead of async_forward_entry_setup
-            if not await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS):
-                _LOGGER.error("Failed to set up platforms")
-                return False
-                
+            await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
             entry_data["platforms_setup"] = True
             _LOGGER.debug("✅ Platforms initialized successfully")
         except Exception as err:
-            _LOGGER.error("Failed to set up platforms: %s", str(err))
+            _LOGGER.error("Failed to set up platforms: %s", str(err), exc_info=True)
             await async_unload_entry(hass, entry)
             return False
         
