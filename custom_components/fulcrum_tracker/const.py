@@ -69,7 +69,6 @@ TRAINERS = [
     "Shane",
     "Shelby",
     "Sonia",
-    "Sydney",
     "Walt",
     "Zei",
     "Squid",
@@ -84,6 +83,7 @@ TRAINER_NAME_MAPPINGS = {
     "emma peel": "Emma",
     "emma krnacik": "Emma",
     "walter frazier": "Walt",
+    "walter": "Walt",
     "curtis reynolds": "Curtis",
     "shane tidrick": "Shane",
     "cheryl chen": "Cheryl",
@@ -96,7 +96,7 @@ TRAINER_NAME_MAPPINGS = {
     "reggie senegal": "Reggie",
     "shelby seaborn": "Shelby",
     "dakayla walters": "Dakayla",
-    "sydney carter": "Sydney",
+    "sydney carter": "Squid",
     "squid carter": "Squid",
     "rj brunoff": "RJ"     
 }
