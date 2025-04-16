@@ -190,6 +190,28 @@ async def async_setup_entry(
 
         _LOGGER.info("Storage retrieved with historical load status: %s", storage.historical_load_done)
 
+        # Pre-populate coordinator with stored data if available
+        initial_data = None
+        if storage.historical_load_done:
+            # Create minimal data structure from storage
+            initial_data = {
+                "total_fulcrum_sessions": storage.total_sessions,
+                "collection_stats": {
+                    "total_sessions": storage.total_sessions,
+                    "current_phase": storage.initialization_phase,
+                    "last_update": storage.last_update,
+                    "fast_startup": True
+                }
+            }
+            
+            # Add trainer session counts if available
+            trainer_counts = storage.get_all_trainer_sessions()
+            for trainer, count in trainer_counts.items():
+                key = f"trainer_{trainer}_sessions"
+                initial_data[key] = count
+                
+            _LOGGER.info("🔍 Pre-populated with stored data (total sessions: %s)", storage.total_sessions)
+
         coordinator = FulcrumDataUpdateCoordinator(
             hass=hass,
             logger=_LOGGER,
@@ -200,31 +222,21 @@ async def async_setup_entry(
             matrix_handler=matrix_handler,
             storage=storage,
         )
+        
+        # If we have initial data, set it on the coordinator
+        if initial_data:
+            coordinator.data = initial_data
     except Exception as err:
         _LOGGER.error("Failed to initialize API handlers: %s", str(err))
         raise
 
-    # this line stores the coordinator reference
+    # Store the coordinator reference
     hass.data[DOMAIN][config_entry.entry_id]["coordinator"] = coordinator
 
     _LOGGER.info("Coordinator created successfully")
 
-    # First load cached data if available
-    if storage.historical_load_done:
-        _LOGGER.info("🔍 Using cached data from storage for initial setup")
-        # Schedule the delayed refresh without awaiting it
-        async_schedule_delayed_refresh(hass, coordinator, timedelta(minutes=5))
-    else:
-        # Only force refresh for new installations
-        try:
-            _LOGGER.info("🔄 New installation - performing initial data load")
-            await coordinator.async_config_entry_first_refresh()
-        except Exception as err:
-            _LOGGER.error("Failed to perform initial data load: %s", str(err))
-            # Even if refresh fails, we still set up the entities with default values
-
     try:
-        # Create the entities, making sure each one has a unique ID
+        # Create the entities
         entities = []
         entity_ids = set()  # Track entity IDs to avoid duplicates
         
@@ -246,14 +258,49 @@ async def async_setup_entry(
                 _LOGGER.warning("Skipping duplicate entity: %s", description.key)
 
         _LOGGER.info("Created %d sensor entities", len(entities))
-        _LOGGER.info("🔄 Adding %d Fulcrum entities to Home Assistant", len(entities))
         
-        # Ensure entities are always added, even if there were earlier errors
+        # Add entities immediately using stored data
         async_add_entities(entities)
-        _LOGGER.info("✅ Entities successfully added")
+        _LOGGER.info("✅ Entities successfully added with stored data")
+        
+        # Schedule the data refresh to happen non-blocking after entities are added
+        async def delayed_refresh(delay):
+            """Execute a delayed refresh that can be safely interrupted."""
+            try:
+                _LOGGER.debug("⏰ Waiting %d seconds before refresh", delay.total_seconds())
+                # Split sleep into small chunks to allow for cancellation
+                for i in range(int(delay.total_seconds())):
+                    await asyncio.sleep(1)
+                    # Check if task was cancelled
+                    if asyncio.current_task().cancelled():
+                        _LOGGER.debug("Delayed refresh task cancelled")
+                        return
+                
+                _LOGGER.info("🔄 Starting background data refresh")
+                await coordinator.async_refresh()
+                _LOGGER.info("✅ Background data refresh completed")
+            except asyncio.CancelledError:
+                _LOGGER.debug("Delayed refresh task cancelled during execution")
+            except Exception as err:
+                _LOGGER.error("❌ Background refresh failed: %s", str(err))
+
+        # Schedule the refresh but don't block setup
+        if storage.historical_load_done:
+            # Existing installation - longer delay to prioritize HA startup
+            delay = timedelta(minutes=5)
+            _LOGGER.info("🔍 Scheduling background refresh in %d minutes", delay.total_seconds() / 60)
+            hass.async_create_task(delayed_refresh(delay))
+        else:
+            # New installation - shorter delay but still non-blocking
+            delay = timedelta(seconds=30)
+            _LOGGER.info("🔄 New installation - scheduling initial data load in %d seconds", delay.total_seconds())
+            hass.async_create_task(delayed_refresh(delay))
+        
     except Exception as err:
         _LOGGER.error("Error creating entities: %s", str(err))
         raise
+
+    _LOGGER.info("⚡ Fulcrum Tracker setup completed - data will refresh in background")
 
 class SensorDefaults:
     """Handle default values for all sensor types."""
@@ -397,19 +444,6 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
     def native_value(self) -> StateType:
         """Return the state of the sensor."""
         _LOGGER.debug("🔍 Getting native_value for %s", self.entity_description.key)
-        
-        # Add debug for trainer sensors
-        if self.entity_description.key.startswith("trainer_"):
-            trainer_name = self.entity_description.key.split("_")[1]
-            _LOGGER.debug("🏋️ Processing trainer sensor for: %s", trainer_name)
-            
-            if self.coordinator.data is None:
-                _LOGGER.debug("⚠️ No coordinator data for trainer %s", trainer_name)
-            else:
-                trainer_key = f"trainer_{trainer_name}_sessions"
-                trainer_value = self.coordinator.data.get(trainer_key)
-                _LOGGER.debug("📊 Trainer %s value: %s", trainer_name, trainer_value)
-        
         if self.coordinator.data is None:
             _LOGGER.debug("⚠️ Coordinator data is None for %s", self.entity_description.key)
             # Return a valid default for total_fulcrum_sessions
