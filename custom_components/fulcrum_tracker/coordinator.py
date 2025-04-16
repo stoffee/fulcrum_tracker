@@ -30,7 +30,7 @@ class FulcrumDataUpdateCoordinator(DataUpdateCoordinator):
         "ash", "cate", "charlotte", "cheryl", "curtis", 
         "dakayla", "devon", "ellis", "emma", "eric", 
         "genevieve", "reggie", "shane", "shelby", "sonia", 
-        "sydney", "walt", "zei", "squid", "unknown"
+        "sydney", "walt", "zei", "squid", "rj", "unknown"
     ]
 
     def __init__(

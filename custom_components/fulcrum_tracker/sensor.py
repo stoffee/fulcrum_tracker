@@ -397,6 +397,19 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
     def native_value(self) -> StateType:
         """Return the state of the sensor."""
         _LOGGER.debug("🔍 Getting native_value for %s", self.entity_description.key)
+        
+        # Add debug for trainer sensors
+        if self.entity_description.key.startswith("trainer_"):
+            trainer_name = self.entity_description.key.split("_")[1]
+            _LOGGER.debug("🏋️ Processing trainer sensor for: %s", trainer_name)
+            
+            if self.coordinator.data is None:
+                _LOGGER.debug("⚠️ No coordinator data for trainer %s", trainer_name)
+            else:
+                trainer_key = f"trainer_{trainer_name}_sessions"
+                trainer_value = self.coordinator.data.get(trainer_key)
+                _LOGGER.debug("📊 Trainer %s value: %s", trainer_name, trainer_value)
+        
         if self.coordinator.data is None:
             _LOGGER.debug("⚠️ Coordinator data is None for %s", self.entity_description.key)
             # Return a valid default for total_fulcrum_sessions
