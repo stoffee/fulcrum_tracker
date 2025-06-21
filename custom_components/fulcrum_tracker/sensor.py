@@ -442,19 +442,35 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self) -> StateType:
-        """Return the state of the sensor."""
+        """Return the state of the sensor with better defaults."""
         _LOGGER.debug("🔍 Getting native_value for %s", self.entity_description.key)
         if self.coordinator.data is None:
             _LOGGER.debug("⚠️ Coordinator data is None for %s", self.entity_description.key)
-            # Return a valid default for total_fulcrum_sessions
+            # Return proper defaults based on sensor type
             if self.entity_description.key == "total_fulcrum_sessions":
                 stored_count = self.coordinator.storage.total_sessions
                 _LOGGER.debug("Using stored session count as default: %s", stored_count)
                 return stored_count or 0
             
-            # Defaults for other sensors...
-            default_state = SensorDefaults.get_loading_state(self.entity_description.key)
-            return default_state["state"]
+            # Better defaults for cost sensors
+            elif self.entity_description.key == "training_cost_per_class":
+                return 0  # Return 0 instead of "unknown"
+            
+            # Better defaults for workout sensors
+            elif self.entity_description.key == "tomorrow_workout":
+                return "No workout scheduled"  # Simple, parseable default
+            
+            # Better defaults for PR sensors
+            elif self.entity_description.key.startswith("pr_"):
+                return "No PR recorded"  # Simple default
+                
+            # Default for other numeric sensors
+            elif hasattr(self.entity_description, 'native_unit_of_measurement'):
+                return 0  # Return 0 for numeric sensors
+            
+            # Default for text sensors
+            else:
+                return "Loading..."
 
         # Add debug logging for total_fulcrum_sessions
         if self.entity_description.key == "total_fulcrum_sessions":
@@ -467,14 +483,14 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
             prs = self.coordinator.data.get("prs_by_type", {})
             if exercise_type in prs and prs[exercise_type]:
                 return prs[exercise_type].get("value")
-            return SensorDefaults.get_loading_state(self.entity_description.key)["state"]
+            return "No PR recorded"  # Better default than "Loading PR data..."
             
         # Format next session nicely if that's what we're showing
         if self.entity_description.key == "next_session" and self.coordinator.data.get("next_session"):
             next_session = self.coordinator.data["next_session"]
             return f"{next_session['date']} {next_session['time']} with {next_session['instructor']}"
 
-        # Handle cost analysis sensors
+        # Handle cost analysis sensors with better defaults
         if self.entity_description.key == "training_tco":
             # Fixed payment data
             payments = [
@@ -490,7 +506,7 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                 sessions = self.coordinator.data.get("total_fulcrum_sessions", 0)
                 
                 if not sessions or sessions == 0:
-                    return 0
+                    return 0  # Return 0 instead of "unknown"
                     
                 monthly_cost = 315.35
                 months_active = round((datetime.now().timestamp() - start_date) / (60*60*24*30), 1)
@@ -499,7 +515,7 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                 return round(total_cost / sessions, 2)
             except Exception as err:
                 _LOGGER.error("Error calculating cost per class: %s", str(err))
-                return 0
+                return 0  # Return 0 instead of "unknown"
                 
         elif self.entity_description.key == "training_session_metrics":
             # Return JSON data that can be parsed in templates
@@ -525,10 +541,27 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                     "total_cost": 0,
                     "actual_cost": 0
                 })
+
+        # Handle tomorrow's workout with better formatting
+        if self.entity_description.key == "tomorrow_workout":
+            workout = self.coordinator.data.get("tomorrow_workout_details")
+            if workout and isinstance(workout, dict):
+                display_format = workout.get('display_format', '')
+                if display_format and '|' in display_format:
+                    return display_format
+                # Fallback formatting
+                workout_type = workout.get('type', 'Unknown')
+                lifts = workout.get('lifts', 'Not specified')
+                return f"{workout_type} | {lifts}"
+            return "No workout scheduled"  # Simple, parseable default
             
         value = self.coordinator.data.get(self.entity_description.key)
         if value is None:
-            return SensorDefaults.get_loading_state(self.entity_description.key)["state"]
+            # Return appropriate defaults based on sensor type
+            if hasattr(self.entity_description, 'native_unit_of_measurement'):
+                return 0  # Numeric sensors get 0
+            else:
+                return "Loading..."  # Text sensors get Loading
         return value
 
     @property
