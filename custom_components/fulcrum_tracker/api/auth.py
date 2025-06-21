@@ -1,4 +1,4 @@
-"""ZenPlanner authentication handler with enhanced error handling and retry logic."""
+"""ZenPlanner authentication handler with simplified login flow and enhanced error handling."""
 import asyncio
 import logging
 from typing import Optional
@@ -48,7 +48,7 @@ class AuthStatus(Enum):
     FAILED = "failed"
 
 class ZenPlannerAuth:
-    """Handle ZenPlanner authentication with enhanced error handling."""
+    """Handle ZenPlanner authentication with simplified login flow."""
 
     def __init__(self, email: str, password: str) -> None:
         """Initialize auth handler."""
@@ -91,7 +91,7 @@ class ZenPlannerAuth:
             self._is_initialized = True
 
     async def login(self) -> bool:
-        """Attempt to log into ZenPlanner with enhanced error handling and retry logic."""
+        """Attempt to log into ZenPlanner with the confirmed working flow."""
         if await self._check_rate_limit():
             raise RateLimitError("Rate limit exceeded. Please wait before retrying.")
 
@@ -100,11 +100,11 @@ class ZenPlannerAuth:
                 self._auth_status = AuthStatus.AUTHENTICATING
                 _LOGGER.debug("🔐 Starting login attempt %d/%d", attempt + 1, self._max_retries + 1)
                 
-                # 1. Get login page and extract token
-                token = await self._get_login_token()
+                # 1. Cookie validation (required by ZenPlanner)
+                await self._validate_cookies()
                 
-                # 2. Submit login credentials
-                success = await self._submit_login_credentials(token)
+                # 2. Submit simple login (no token needed!)
+                success = await self._submit_simple_login()
                 
                 if success:
                     self._auth_status = AuthStatus.AUTHENTICATED
@@ -156,19 +156,19 @@ class ZenPlannerAuth:
         self._auth_status = AuthStatus.FAILED
         return False
 
-    async def _get_login_token(self) -> str:
-        """Get login token from the login page with enhanced error handling."""
-        login_url = f"{self.base_url}{API_ENDPOINTS['login']}"
+    async def _validate_cookies(self) -> None:
+        """Step 1: ZenPlanner cookie validation (REQUIRED)."""
+        cookie_url = f"{self.base_url}/login.cfm"
         params = {
-            "VIEW": "login",
-            "LOGOUT": "false",
+            "VIEW": "cookies",
+            "LOGOUT": "0", 
             "message": "multiProfile"
         }
         
         try:
             session = await self.requests_session
             async with session.get(
-                login_url, 
+                cookie_url, 
                 params=params, 
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as response:
@@ -182,56 +182,37 @@ class ZenPlannerAuth:
                 elif response.status != 200:
                     raise NetworkError(f"Unexpected status: {response.status}")
                     
-                content = await response.text()
+                _LOGGER.debug("🍪 Cookie validation successful")
                 
         except asyncio.TimeoutError:
-            raise NetworkError("Timeout while fetching login page")
+            raise NetworkError("Timeout during cookie validation")
         except aiohttp.ClientError as err:
-            raise NetworkError(f"Network error fetching login page: {str(err)}")
-        
-        # Parse token with better error handling
-        try:
-            soup = BeautifulSoup(content, 'html.parser')
-            token_input = soup.find('input', {'name': '__xsToken'})
-            
-            if not token_input:
-                raise ServerError("No security token found in login page")
-                
-            token = token_input.get('value', '')
-            if not token:
-                raise ServerError("Empty security token received")
-                
-            _LOGGER.debug("🔑 Security token extracted successfully")
-            return token
-            
-        except Exception as err:
-            raise ServerError(f"Failed to parse login page: {str(err)}")
+            raise NetworkError(f"Network error during cookie validation: {str(err)}")
 
-    async def _submit_login_credentials(self, token: str) -> bool:
-        """Submit login credentials with enhanced error handling."""
-        login_url = f"{self.base_url}{API_ENDPOINTS['login']}"
+    async def _submit_simple_login(self) -> bool:
+        """Step 2: Submit simple login form (confirmed working method)."""
+        login_url = f"{self.base_url}/login.cfm"
         login_data = {
             "username": self.email,
-            "password": self.password,
-            "__xsToken": token,
-            "NOVALIDATE": "true"
+            "password": self.password
         }
         
-        # Add form headers
+        # Set form headers
         session = await self.requests_session
         session.headers.update({
             'Content-Type': 'application/x-www-form-urlencoded',
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache'
+            'Referer': f"{self.base_url}/login.cfm?VIEW=login&LOGOUT=false&message=multiProfile"
         })
         
-        login_url_full = f"{login_url}?VIEW=login&LOGOUT=false&message=multiProfile"
+        # Submit to the exact action URL from the form
+        submit_url = f"{login_url}?VIEW=login&LOGOUT=0&message=multiProfile"
         
         try:
             async with session.post(
-                login_url_full, 
+                submit_url, 
                 data=login_data,
-                timeout=aiohttp.ClientTimeout(total=15)
+                timeout=aiohttp.ClientTimeout(total=15),
+                allow_redirects=False  # Handle redirects manually
             ) as login_response:
                 
                 if login_response.status == 429:
@@ -241,18 +222,34 @@ class ZenPlannerAuth:
                 elif login_response.status >= 400:
                     raise NetworkError(f"Client error during login: {login_response.status}")
                 
-                # Check for successful login by URL redirect
-                if 'person.cfm' in str(login_response.url):
-                    _LOGGER.debug("✅ Login successful - redirected to person.cfm")
-                    return True
-                else:
-                    # Check response content for more specific error
-                    response_text = await login_response.text()
-                    if 'invalid' in response_text.lower() or 'error' in response_text.lower():
+                # Check for successful login by redirect
+                if login_response.status in [302, 303]:
+                    location = login_response.headers.get('location', '')
+                    if 'person.cfm' in location:
+                        _LOGGER.debug("✅ Login successful - redirected to person.cfm")
+                        return True
+                    elif 'login.cfm' in location:
+                        _LOGGER.debug("❌ Login failed - redirected back to login")
                         raise InvalidCredentialsError("Invalid username or password")
+                
+                # For 200 responses, check if we got the profile page content
+                if login_response.status == 200:
+                    response_text = await login_response.text()
+                    # Look for success indicators in the response
+                    success_indicators = ['person.cfm', 'My Profile', 'Log Out', 'chris dunlap']
+                    if any(indicator in response_text for indicator in success_indicators):
+                        _LOGGER.debug("✅ Login successful - found profile content")
+                        return True
+                    elif any(fail_indicator in response_text.lower() for fail_indicator in ['invalid', 'error', 'login failed']):
+                        raise InvalidCredentialsError("Invalid username or password")
+                    elif 'You Must Enable Cookies' in response_text:
+                        raise ServerError("Cookie validation failed")
                     else:
-                        _LOGGER.debug("🔍 Login response: %s", response_text[:200])
-                        raise ServerError("Unexpected login response")
+                        _LOGGER.debug("🔍 Login response unclear: %s", response_text[:200])
+                        raise ServerError("Unclear login response")
+                        
+                # Fallback for other status codes
+                raise ServerError(f"Unexpected login response status: {login_response.status}")
                         
         except asyncio.TimeoutError:
             raise NetworkError("Timeout during login submission")
@@ -280,8 +277,15 @@ class ZenPlannerAuth:
                     # Don't change auth status for rate limits
                     return True
                 elif response.ok:
-                    _LOGGER.debug("✅ Session is valid")
-                    return True
+                    # Check if we actually got the profile page content
+                    response_text = await response.text()
+                    if any(indicator in response_text for indicator in ['My Profile', 'Log Out', 'person.cfm']):
+                        _LOGGER.debug("✅ Session is valid")
+                        return True
+                    else:
+                        self._auth_status = AuthStatus.EXPIRED
+                        _LOGGER.debug("🔄 Session expired - got login page instead")
+                        return False
                 else:
                     _LOGGER.warning("⚠️ Unexpected status during session check: %s", response.status)
                     return False
