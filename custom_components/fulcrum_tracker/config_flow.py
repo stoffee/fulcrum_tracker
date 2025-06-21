@@ -17,8 +17,6 @@ from homeassistant.helpers import config_validation as cv
 
 from .const import (
     DOMAIN,
-    CONF_PERSON_ID,
-    CONF_CLIENT_ID,
     CONF_MONTHLY_COST,
     DEFAULT_MONTHLY_COST,
     CONF_CALENDAR_ID,
@@ -35,7 +33,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle the initial step - ZenPlanner credentials."""
+        """Handle the initial step - ZenPlanner credentials (simplified)."""
         errors = {}
 
         if user_input is not None:
@@ -59,11 +57,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required(CONF_USERNAME): str,
                     vol.Required(CONF_PASSWORD): str,
-                    vol.Required(CONF_PERSON_ID): str,
-                    vol.Required(CONF_CLIENT_ID): str,
                     vol.Optional(CONF_MONTHLY_COST, default=DEFAULT_MONTHLY_COST): cv.positive_float,
                 }
             ),
+            description_placeholders={
+                "username_note": "Your ZenPlanner login email address",
+                "password_note": "Your ZenPlanner account password",
+                "cost_note": "Monthly cost for session tracking (optional)"
+            },
             errors=errors,
         )
 
@@ -90,7 +91,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             ),
             description_placeholders={
-                "email_note": "Use the email address from your Google Calendar."
+                "email_note": "Use the email address from your Google Calendar (e.g., your-email@gmail.com)."
             },
             errors=errors,
         )
@@ -111,7 +112,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 async with aiofiles.open(json_path, "w") as json_file:
                     await json_file.write(json_content)
 
-                # Combine all configuration data
+                # Combine all configuration data (no longer including person_id/client_id)
                 config_data = {
                     **self.context["zenplanner"],
                     **self.context["calendar"],
@@ -133,14 +134,27 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({
                 vol.Required("service_account_json"): str
             }),
+            description_placeholders={
+                "json_note": "Paste the contents of your Google Service Account JSON file here."
+            },
             errors=errors,
         )
 
     @staticmethod
     def _validate_user_input(user_input: dict[str, Any]) -> bool:
         """Validate user input for initial form."""
-        # Placeholder validation (replace with actual checks)
-        return all(user_input.values())
+        # Basic validation - ensure username and password are provided
+        username = user_input.get(CONF_USERNAME, "").strip()
+        password = user_input.get(CONF_PASSWORD, "").strip()
+        
+        if not username or not password:
+            return False
+            
+        # Basic email validation for username
+        if "@" not in username or "." not in username:
+            return False
+            
+        return True
 
     @staticmethod
     async def _validate_json(json_content: str) -> None:

@@ -5,8 +5,6 @@ from datetime import timedelta
 DOMAIN = "fulcrum_tracker"
 
 # Configuration Constants
-CONF_PERSON_ID = "person_id"
-CONF_CLIENT_ID = "client_id"
 CONF_START_DATE = "start_date"
 CONF_MONTHLY_COST = "monthly_cost"
 CONF_CALENDAR_ID = "calendar_id"
@@ -16,9 +14,6 @@ CONF_SERVICE_ACCOUNT_PATH = "service_account_path"
 DEFAULT_START_DATE = "2021-11-01"
 DEFAULT_UPDATE_INTERVAL = 1440  # minutes
 SCAN_INTERVAL = timedelta(minutes=DEFAULT_UPDATE_INTERVAL)
-DEFAULT_PERSON_ID = ""  # Will be provided by user during setup
-DEFAULT_USER_ID = DEFAULT_PERSON_ID 
-DEFAULT_CLIENT_ID = ""  # Will be provided by user during setup
 DEFAULT_MONTHLY_COST = 315.35  # Default monthly cost
 DEFAULT_CACHE_TTL = 86400  # 1 hour in seconds
 

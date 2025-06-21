@@ -32,7 +32,6 @@ from .api.pr import PRHandler
 from .const import (
     DOMAIN,
     DEFAULT_UPDATE_INTERVAL,
-    DEFAULT_USER_ID,
     CONF_CALENDAR_ID,
     CONF_SERVICE_ACCOUNT_PATH,
     TRAINERS,
@@ -178,10 +177,11 @@ async def async_setup_entry(
     _LOGGER.info("Service account path exists: %s", service_account_path and hass.config.is_allowed_path(service_account_path))
 
     try:
-        # Initialize API handlers
+        # Initialize API handlers - no more person_id/client_id needed!
         auth = ZenPlannerAuth(username, password)
         calendar = ZenPlannerCalendar(auth)
-        pr_handler = PRHandler(auth, DEFAULT_USER_ID)
+        # PR handler will auto-detect user ID after login
+        pr_handler = PRHandler(auth, user_id=None)  # Let it auto-detect
         google_calendar = AsyncGoogleCalendarHandler(service_account_path, calendar_id)
         matrix_handler = MatrixCalendarHandler(google_calendar)
         
