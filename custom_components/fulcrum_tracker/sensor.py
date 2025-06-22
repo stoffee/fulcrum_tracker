@@ -1,4 +1,4 @@
-"""Sensor platform for Fulcrum Tracker integration - FIXED VERSION."""
+"""Sensor platform for Fulcrum Tracker integration."""
 from __future__ import annotations
 
 import asyncio
@@ -144,6 +144,23 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
     ),
 )
 
+# Define this helper function outside of async_setup_entry so it's accessible
+def async_schedule_delayed_refresh(hass, coordinator, delay):
+    """Schedule a delayed refresh after startup without blocking."""
+    _LOGGER.info("⏰ Scheduling delayed refresh in %s minutes", delay.total_seconds() / 60)
+    
+    async def _delayed_refresh():
+        try:
+            await asyncio.sleep(delay.total_seconds())
+            _LOGGER.info("🔄 Performing delayed incremental refresh")
+            await coordinator.async_refresh()
+        except Exception as err:
+            _LOGGER.error("❌ Delayed refresh task failed: %s", str(err))
+    
+    # Create task but don't await it
+    task = hass.async_create_task(_delayed_refresh())
+    return task
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -285,6 +302,123 @@ async def async_setup_entry(
 
     _LOGGER.info("⚡ Fulcrum Tracker setup completed - data will refresh in background")
 
+class SensorDefaults:
+    """Handle default values for all sensor types."""
+
+    @staticmethod
+    def get_loading_state(sensor_key: str) -> Dict[str, Any]:
+        """Get appropriate loading state for a sensor type."""
+        
+        # PR-specific defaults
+        if sensor_key.startswith("pr_"):
+            return {
+                "state": "Loading PR data...",
+                "attributes": {
+                    "last_attempt": "Not yet loaded",
+                    "days_since": "?",
+                    "attempts": 0,
+                    "date_achieved": None,
+                    "loading_status": "initializing"
+                }
+            }
+        
+        # Trainer session counters
+        if sensor_key.startswith("trainer_"):
+            trainer_name = sensor_key.split("_")[1].title()
+            return {
+                "state": 0,
+                "attributes": {
+                    "total_sessions": 0,
+                    "trainer_name": trainer_name,
+                    "loading_status": "initializing"
+                }
+            }
+        
+        # Special case sensors
+        SPECIAL_DEFAULTS = {
+            "zenplanner_fulcrum_sessions": {
+                "state": 0,
+                "attributes": {"source": "ZenPlanner", "loading_status": "initializing"}
+            },
+            "google_calendar_fulcrum_sessions": {
+                "state": 0,
+                "attributes": {"source": "Google Calendar", "loading_status": "initializing"}
+            },
+            "total_fulcrum_sessions": {
+                "state": 0,
+                "attributes": {
+                    "sessions_this_month": 0,
+                    "last_session_date": "Loading...",
+                    "calendar_total": 0,
+                    "new_sessions_today": 0,
+                    "update_streak": 0,
+                    "current_phase": "initializing",
+                    "loading_status": "initializing"
+                }
+            },
+            "monthly_sessions": {
+                "state": 0,
+                "attributes": {"loading_status": "initializing"}
+            },
+            "last_session": {
+                "state": "Loading last session data...",
+                "attributes": {"loading_status": "initializing"}
+            },
+            "next_session": {
+                "state": "Loading next session data...",
+                "attributes": {
+                    "instructor": "Loading...",
+                    "location": "Loading...",
+                    "description": "Initializing session data...",
+                    "loading_status": "initializing"
+                }
+            },
+            "recent_prs": {
+                "state": "Loading PR history...",
+                "attributes": {"loading_status": "initializing"}
+            },
+            "total_prs": {
+                "state": 0,
+                "attributes": {"loading_status": "initializing"}
+            },
+            "tomorrow_workout": {
+                "state": "Loading workout data...",
+                "attributes": {
+                    "workout_type": "Loading...",
+                    "lifts": "Loading...",
+                    "meps": "Loading...",
+                    "loading_status": "initializing"
+                }
+            },
+            # Add defaults for cost sensors
+            "training_tco": {
+                "state": 0,
+                "attributes": {"loading_status": "initializing"}
+            },
+            "training_cost_per_class": {
+                "state": 0,
+                "attributes": {"loading_status": "initializing"}
+            },
+            "training_session_metrics": {
+                "state": "{}",
+                "attributes": {"loading_status": "initializing"}
+            }
+        }
+        
+        # Return special case or generic default
+        return SPECIAL_DEFAULTS.get(sensor_key, {
+            "state": "Initializing...",
+            "attributes": {"loading_status": "initializing"}
+        })
+
+    @staticmethod
+    def is_loading_state(state_dict: Dict[str, Any]) -> bool:
+        """Check if a state dictionary represents a loading state."""
+        return (
+            isinstance(state_dict, dict) and 
+            state_dict.get("attributes", {}).get("loading_status") == "initializing"
+        )
+
 
 class FulcrumSensor(CoordinatorEntity, SensorEntity):
     """Representation of a Fulcrum sensor."""
@@ -307,79 +441,24 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
         )
 
     @property
-    def available(self) -> bool:
-        """Return True if entity is available."""
-        # Always return True to prevent "unavailable" state
-        return True
-
-    @property
     def native_value(self) -> StateType:
-        """Return the state of the sensor with ROBUST defaults."""
+        """Return the state of the sensor with better defaults."""
         _LOGGER.debug("🔍 Getting native_value for %s", self.entity_description.key)
-        
-        # Handle cost analysis sensors with GUARANTEED numeric returns
-        if self.entity_description.key == "training_tco":
-            try:
-                # Fixed payment data - always returns a number
-                payments = [
-                    (1892.10, datetime(2023, 4, 4).timestamp()),
-                    (1892.10, datetime(2022, 7, 7).timestamp()),
-                    (96.00, datetime(2021, 11, 8).timestamp())
-                ]
-                return round(sum(payment[0] for payment in payments), 2)
-            except Exception as err:
-                _LOGGER.error("Error calculating TCO: %s", str(err))
-                return 3880.20  # Fallback to known total
-            
-        elif self.entity_description.key == "training_cost_per_class":
-            try:
-                if self.coordinator.data is None:
-                    return 31.54  # Reasonable fallback value
-                    
-                sessions = self.coordinator.data.get("total_fulcrum_sessions", 0)
-                if not sessions or sessions == 0:
-                    return 31.54  # Reasonable default if no sessions yet
-                    
-                start_date = datetime(2023, 9, 15).timestamp()
-                monthly_cost = 315.35
-                months_active = round((datetime.now().timestamp() - start_date) / (60*60*24*30), 1)
-                total_cost = monthly_cost * months_active
-                
-                result = round(total_cost / sessions, 2)
-                return result if result > 0 else 31.54
-            except Exception as err:
-                _LOGGER.error("Error calculating cost per class: %s", str(err))
-                return 31.54  # Always return a reasonable number
-        
-        # Handle tomorrow's workout with TEMPLATE-SAFE format
-        elif self.entity_description.key == "tomorrow_workout":
-            try:
-                if self.coordinator.data is None:
-                    return "Unknown | No workout scheduled"  # Template-safe format
-                
-                workout = self.coordinator.data.get("tomorrow_workout_details")
-                if workout and isinstance(workout, dict):
-                    display_format = workout.get('display_format', '')
-                    if display_format and '|' in display_format:
-                        return display_format
-                    # Fallback formatting - ALWAYS include the pipe
-                    workout_type = workout.get('type', 'Unknown')
-                    lifts = workout.get('lifts', 'Not specified')
-                    return f"{workout_type} | {lifts}"
-                
-                # CRITICAL: Always return template-safe format with pipe
-                return "No Workout | Scheduled"
-            except Exception as err:
-                _LOGGER.error("Error formatting workout: %s", str(err))
-                return "Error | Loading workout"
-        
-        # Handle other cases
         if self.coordinator.data is None:
+            _LOGGER.debug("⚠️ Coordinator data is None for %s", self.entity_description.key)
             # Return proper defaults based on sensor type
             if self.entity_description.key == "total_fulcrum_sessions":
                 stored_count = self.coordinator.storage.total_sessions
                 _LOGGER.debug("Using stored session count as default: %s", stored_count)
                 return stored_count or 0
+            
+            # Better defaults for cost sensors
+            elif self.entity_description.key == "training_cost_per_class":
+                return 0  # Return 0 instead of "unknown"
+            
+            # Better defaults for workout sensors
+            elif self.entity_description.key == "tomorrow_workout":
+                return "No workout scheduled"  # Simple, parseable default
             
             # Better defaults for PR sensors
             elif self.entity_description.key.startswith("pr_"):
@@ -403,14 +482,41 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
             exercise_type = self.entity_description.key[3:]
             prs = self.coordinator.data.get("prs_by_type", {})
             if exercise_type in prs and prs[exercise_type]:
-                return prs[exercise_type].get("value", "No PR recorded")
-            return "No PR recorded"
+                return prs[exercise_type].get("value")
+            return "No PR recorded"  # Better default than "Loading PR data..."
             
         # Format next session nicely if that's what we're showing
         if self.entity_description.key == "next_session" and self.coordinator.data.get("next_session"):
             next_session = self.coordinator.data["next_session"]
             return f"{next_session['date']} {next_session['time']} with {next_session['instructor']}"
 
+        # Handle cost analysis sensors with better defaults
+        if self.entity_description.key == "training_tco":
+            # Fixed payment data
+            payments = [
+                (1892.10, datetime(2023, 4, 4).timestamp()),
+                (1892.10, datetime(2022, 7, 7).timestamp()),
+                (96.00, datetime(2021, 11, 8).timestamp())
+            ]
+            return round(sum(payment[0] for payment in payments), 2)
+            
+        elif self.entity_description.key == "training_cost_per_class":
+            try:
+                start_date = datetime(2023, 9, 15).timestamp()
+                sessions = self.coordinator.data.get("total_fulcrum_sessions", 0)
+                
+                if not sessions or sessions == 0:
+                    return 0  # Return 0 instead of "unknown"
+                    
+                monthly_cost = 315.35
+                months_active = round((datetime.now().timestamp() - start_date) / (60*60*24*30), 1)
+                total_cost = monthly_cost * months_active
+                
+                return round(total_cost / sessions, 2)
+            except Exception as err:
+                _LOGGER.error("Error calculating cost per class: %s", str(err))
+                return 0  # Return 0 instead of "unknown"
+                
         elif self.entity_description.key == "training_session_metrics":
             # Return JSON data that can be parsed in templates
             try:
@@ -435,6 +541,19 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                     "total_cost": 0,
                     "actual_cost": 0
                 })
+
+        # Handle tomorrow's workout with better formatting
+        if self.entity_description.key == "tomorrow_workout":
+            workout = self.coordinator.data.get("tomorrow_workout_details")
+            if workout and isinstance(workout, dict):
+                display_format = workout.get('display_format', '')
+                if display_format and '|' in display_format:
+                    return display_format
+                # Fallback formatting
+                workout_type = workout.get('type', 'Unknown')
+                lifts = workout.get('lifts', 'Not specified')
+                return f"{workout_type} | {lifts}"
+            return "No workout scheduled"  # Simple, parseable default
             
         value = self.coordinator.data.get(self.entity_description.key)
         if value is None:
@@ -448,11 +567,13 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return entity specific state attributes."""
-        attrs = {}
+        # Start with default attributes
+        default_state = SensorDefaults.get_loading_state(self.entity_description.key)
+        attrs = default_state["attributes"].copy()
 
-        # If we don't have coordinator data yet, return minimal defaults
+        # If we don't have coordinator data yet, return defaults
         if self.coordinator.data is None:
-            return {"loading_status": "initializing"}
+            return attrs
             
         data = self.coordinator.data or {}
 
@@ -462,19 +583,11 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
             prs = self.coordinator.data.get("prs_by_type", {}).get(exercise_type, {})
             if prs:
                 attrs.update({
-                    "last_attempt": prs.get("last_result", "Unknown"),
-                    "days_since": prs.get("days_since", "Unknown"),
-                    "attempts": prs.get("attempts", 0),
-                    "date_achieved": prs.get("date", "Unknown"),
+                    "last_attempt": prs.get("last_result"),
+                    "days_since": prs.get("days_since"),
+                    "attempts": prs.get("attempts"),
+                    "date_achieved": prs.get("date"),
                     "loading_status": "complete"
-                })
-            else:
-                attrs.update({
-                    "last_attempt": "No data",
-                    "days_since": "N/A",
-                    "attempts": 0,
-                    "date_achieved": "Never",
-                    "loading_status": "no_data"
                 })
 
         # Tomorrow's workout attributes
@@ -486,22 +599,17 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                     "lifts": workout.get('lifts', 'Not specified'),
                     "meps_target": workout.get('meps', 'Not specified'),
                     "raw_summary": workout.get('raw_summary', ''),
+                    "created_by": workout.get('created_by', 'Unknown'),
+                    "last_updated": workout.get('last_updated', None),
                     "loading_status": "complete"
                 })
-            else:
-                attrs.update({
-                    "workout_type": "None",
-                    "lifts": "No workout scheduled",
-                    "meps_target": "N/A",
-                    "raw_summary": "No workout data available",
-                    "loading_status": "no_data"
-                })
+                _LOGGER.debug("📊 Workout attributes updated: %s", attrs)
 
         # Total sessions attributes
         elif self.entity_description.key == "total_fulcrum_sessions":
             attrs.update({
                 "sessions_this_month": data.get("monthly_sessions", 0),
-                "last_session_date": data.get("last_session", "Unknown"),
+                "last_session_date": data.get("last_session"),
                 "calendar_total": data.get("google_calendar_fulcrum_sessions", 0),
                 "loading_status": "complete",
                 "storage_state": {
@@ -540,6 +648,7 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                 
         # Cost analysis attributes
         elif self.entity_description.key == "training_tco":
+            # Add cost analysis attributes
             attrs.update({
                 "payments": [
                     {"amount": 1892.10, "date": "2023-04-04"},
@@ -567,9 +676,9 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                 })
             except Exception as err:
                 _LOGGER.error("Error calculating cost attributes: %s", str(err))
-                attrs.update({"loading_status": "error", "error": str(err)})
                 
         elif self.entity_description.key == "training_session_metrics":
+            # Include raw data for debugging
             try:
                 start_date = datetime(2023, 9, 15).timestamp()
                 sessions_attended = self.coordinator.data.get("total_fulcrum_sessions", 0)
@@ -588,6 +697,5 @@ class FulcrumSensor(CoordinatorEntity, SensorEntity):
                 })
             except Exception as err:
                 _LOGGER.error("Error calculating metrics attributes: %s", str(err))
-                attrs.update({"loading_status": "error", "error": str(err)})
 
         return attrs
