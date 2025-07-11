@@ -248,46 +248,6 @@ class FulcrumTrackerStore:
             for trainer, data in self._data.get("trainer_sessions", {}).items()
         }
 
-    async def async_update_data(self, data: Dict[str, Any]) -> None:
-        """Update storage data."""
-        self._data.update(data)
-        await self.async_save()
-
-    @property
-    def historical_load_done(self) -> bool:
-        """Check if historical data load is complete."""
-        return self._data.get("historical_load_done", False)
-
-    @property
-    def last_update(self) -> Optional[str]:
-        """Get the last update timestamp."""
-        return self._data.get("last_update")
-
-    @property
-    def total_sessions(self) -> int:
-        """Get total number of tracked sessions."""
-        return self._data.get("total_sessions", 0)
-
-    @property
-    def initialization_phase(self) -> str:
-        """Get current initialization phase."""
-        return self._data.get("initialization_phase", "init")
-
-    async def async_mark_historical_load_complete(self, session_count: Optional[int] = None) -> None:
-        """Mark historical data load as complete."""
-        _LOGGER.info("🎯 Marking historical data load as complete")
-        completion_data = {
-            "historical_load_done": True,
-            "initialization_phase": "incremental",
-            "completion_timestamp": dt_now().isoformat()
-        }
-        
-        if session_count is not None:
-            _LOGGER.debug("📊 Including session count: %d", session_count)
-            completion_data["total_sessions"] = session_count
-            
-        await self.async_update_data(completion_data)
-
     async def async_update_session_count(self, count: int) -> None:
         """Update total session count."""
         _LOGGER.debug("🔢 Updating total session count to: %d", count)
