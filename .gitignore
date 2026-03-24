@@ -208,3 +208,9 @@ __pycache__/
 coverage.xml
 htmlcov/
 .tox/
+
+# Claude Code files
+CLAUDE.md
+
+# Standalone app directory
+fulcrum_standalone/
